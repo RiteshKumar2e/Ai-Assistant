@@ -175,8 +175,13 @@ def volume_set(value: int):
             return
         except Exception as e:
             print(f"[Settings] pycaw failed, using keypress fallback: {e}")
-            pyautogui.press("volumemute")
-            pyautogui.press("volumemute")
+            # Without pycaw we can't read the current level either, so drive
+            # it down to 0 first (each volumedown key ~2%, so 60 presses is
+            # enough headroom from any starting point) and step back up.
+            for _ in range(60):
+                pyautogui.press("volumedown")
+            for _ in range(round(value / 2)):
+                pyautogui.press("volumeup")
     elif _OS == "Darwin":
         subprocess.run(["osascript", "-e", f"set volume output volume {value}"],
             capture_output=True)
