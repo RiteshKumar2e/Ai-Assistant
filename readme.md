@@ -1,9 +1,17 @@
-# ⚙️ MARK LIII (53)
-### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
+<div align="center">
 
-> 📺 **[Watch the full setup video on YouTube](https://www.youtube.com/@FatihMakes)**
+# ⚙️ JAADU — AI Assistant
+### Mark LIII · The Ultimate Cross-Platform Personal AI Assistant
 
-A real-time voice AI that can hear, see, understand, and control your computer — on any OS. Supports Windows, macOS, and Linux. Built on the Gemini Live API for native audio streaming, delivering zero subscriptions and total digital autonomy.
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](#-requirements)
+[![Engine](https://img.shields.io/badge/Engine-Gemini%203.1%20Flash%20Live-8E44AD)](#-whats-new-in-mark-liii)
+[![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey)](#%EF%B8%8F-license)
+
+**A real-time voice AI that can hear, see, understand, and control your computer — on any OS.**
+Built on the Gemini Live API for native audio streaming, delivering zero subscriptions and total digital autonomy.
+
+</div>
 
 ---
 
@@ -65,6 +73,8 @@ It's not just an assistant — it's an extension of your digital life.
 | ⚡ Auto-Start on Boot | Registers with the OS startup system (registry / LaunchAgent / .desktop) |
 | 📋 Clipboard Intelligence | Copy any text → floating panel with Translate / Summarise / Explain / Fix |
 | 🪪 Assistant Customization | Change the assistant name, your name, voice, and colour from the UI — takes effect immediately |
+| 🎛️ Media Control | Play/pause, skip, previous, stop, volume and mute for whatever is currently playing — Spotify, YouTube, or any player |
+| 🔁 Unit Converter | Converts length, weight, temperature and currency (live exchange rate) on request |
 
 ---
 
@@ -195,15 +205,15 @@ It is held in memory only, deliberately: writing it to disk would make a fresh l
 | **LII** | Voice picker · live theming · reactive HUD · recallable memory · undo · real confirmation · audio device picker · session continuity |
 | **LIII** | Wake word · Gemini 3.1 Flash Live · instant acknowledgment · self-describing action/plugin architecture |
 | *shared* | The last five above also shipped to LIII, LIV and LV at the same time — moving up a Mark never loses them |
-| **LIV+** | Plugin files: email · quiz mode · calendar · home assistant · 3D-printer · and more |
+| **LIV+** | Plugin files: email · quiz mode · calendar · home assistant · 3D-printer · media control · unit converter · and more |
 
 ---
 
 ## ⚡ Quick Start
 
 ```bash
-git clone https://github.com/FatihMakes/Mark-LIII.git
-cd Mark-LIII
+git clone https://github.com/RiteshKumar2e/Ai-Assistant.git
+cd Ai-Assistant
 python setup.py        # installs deps for YOUR OS + the browser automation engine
 python main.py
 ```
@@ -230,12 +240,14 @@ python main.py
 ## 🗂️ Project Structure
 
 ```
-Mark LIII/
+Ai-Assistant/
 ├── main.py                   # Core loop — Gemini Live session, audio I/O, wake/sleep state, tool dispatch
 ├── ui.py                     # PyQt6 HUD — reactive waveform, log panel, settings drawer, plugin manager, camera feed
 ├── setup.py                  # OS-aware installer (skips wrong-OS dependencies)
 ├── plugins/
 │   ├── _template.py          # Copy this to write a new plugin — one file, drop in, done
+│   ├── media_control.py      # Play/pause, skip, volume & mute for whatever is currently playing
+│   ├── unit_converter.py     # Length, weight, temperature & live-rate currency conversion
 │   └── ...                   # Drop-in skills (each self-describes via a PLUGIN dict + run())
 ├── actions/                  # Bundled skills — each self-describes via a TOOL dict + handler
 │   ├── web_search.py         # Gemini + DDG parallel search (news, research, price, compare)
@@ -247,6 +259,7 @@ Mark LIII/
 │   ├── computer_settings.py  # Volume, brightness, WiFi, power (per-OS)
 │   ├── computer_control.py   # Keyboard shortcuts, mouse, window management
 │   ├── open_app.py           # Application launcher (per-OS name map)
+│   ├── open_folder.py        # Folder navigation and shortcuts
 │   ├── browser_control.py    # Web browser control
 │   ├── file_controller.py    # File system operations
 │   ├── file_processor.py     # Document reading and summarization
@@ -258,19 +271,26 @@ Mark LIII/
 │   ├── code_helper.py        # Code review and generation
 │   ├── dev_agent.py          # Developer task agent
 │   └── desktop.py            # Desktop and taskbar control
+├── dashboard/
+│   ├── server.py             # FastAPI server behind the remote (phone / QR) dashboard
+│   └── static/                # Dashboard front-end assets
 ├── memory/
 │   ├── memory_manager.py     # Load/save long_term.json — sessions, monitors, identity
 │   ├── config_manager.py     # api_keys.json access — key, OS, name, voice, colour, toggles
 │   └── long_term.json        # Persistent store: identity, preferences, projects, sessions, monitors
 ├── core/
 │   ├── prompt.txt            # Assistant personality and tool-routing rules
+│   ├── llm_client.py         # Gemini Live session client
+│   ├── stt.py / tts.py       # Speech-to-text / text-to-speech pipelines
 │   ├── undo.py               # One shared undo stack — actions register how to reverse themselves
 │   ├── confirm.py            # Irreversible-action gate — the token is issued by the UI, not the model
 │   ├── audio_devices.py      # Microphone / speaker list — filtered, measured, resolved by name
 │   ├── plugin_loader.py      # Plugin engine — discovery, validation, crash isolation
 │   ├── action_loader.py      # Bundled-action engine — the built-in twin of plugin_loader
+│   ├── installer.py          # OS-aware dependency installation helpers
 │   └── wake_word.py          # Local "Hey Jarvis" detector — own thread, offline, opt-in
 └── config/
+    ├── api_keys.example.json # Template for local API key configuration
     └── api_keys.json         # API key, OS setting, assistant name, user name, voice, UI colour, toggles
 ```
 
@@ -283,12 +303,14 @@ Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licens
 
 ---
 
-## 👤 Connect with the Creator
+## 🤝 Contributing
 
-Engineered by a developer building a real-world JAADU-style assistant.
-⭐ **Star the repository to support the journey to Mark 100.**
+Issues and pull requests are welcome — bundled **actions** and drop-in **plugins** both follow the self-describing `TOOL` / `PLUGIN` pattern (see `plugins/_template.py`), so adding a new skill rarely touches the core.
 
-| Platform | Link |
-| --- | --- |
-| YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
-| Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
+---
+
+## 👤 Author
+
+Built and maintained by **[RiteshKumar2e](https://github.com/RiteshKumar2e)**.
+
+⭐ **Star [Ai-Assistant](https://github.com/RiteshKumar2e/Ai-Assistant) if JAADU is useful to you.**
