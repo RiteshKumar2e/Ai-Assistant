@@ -1,11 +1,11 @@
 <div align="center">
 
 # ⚙️ JUDO — AI Assistant
-### Mark LIII · The Ultimate Cross-Platform Personal AI Assistant
+### RITESH LIII · The Ultimate Cross-Platform Personal AI Assistant
 
 [![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](#-requirements)
-[![Engine](https://img.shields.io/badge/Engine-Gemini%203.1%20Flash%20Live-8E44AD)](#-whats-new-in-mark-liii)
+[![Engine](https://img.shields.io/badge/Engine-Gemini%203.1%20Flash%20Live-8E44AD)](#-whats-new-in-ritesh-liii)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey)](#%EF%B8%8F-license)
 
 **A real-time voice AI that can hear, see, understand, and control your computer — on any OS.**
@@ -17,7 +17,7 @@ Built on the Gemini Live API for native audio streaming, delivering zero subscri
 
 ## ✨ Overview
 
-**MARK LIII is the hands-free & scalable release.** Say **"Hey Jarvis"** and it wakes; stay quiet and it slips back to sleep on its own — while asleep, your microphone never leaves the machine, so an off-hand *"I'll be right there"* to someone in the room no longer sets it off. Under the hood it now runs on the faster **Gemini 3.1 Flash Live** engine, and the moment you ask for something that takes a beat — analysing a file, searching the web — it answers instantly *("On it — going through that now…")* so you never wonder whether it heard you.
+**RITESH LIII is the hands-free & scalable release.** Say **"Hey Judo"** and it wakes; stay quiet and it slips back to sleep on its own — while asleep, your microphone never leaves the machine, so an off-hand *"I'll be right there"* to someone in the room no longer sets it off. Under the hood it now runs on the faster **Gemini 3.1 Flash Live** engine, and the moment you ask for something that takes a beat — analysing a file, searching the web — it answers instantly *("On it — going through that now…")* so you never wonder whether it heard you.
 
 It's also built to grow: every skill — bundled or drop-in — now **describes itself in its own file**, so adding a tool is a one-file operation and the core stays lean.
 
@@ -30,7 +30,7 @@ It's not just an assistant — it's an extension of your digital life.
 ### Core Features
 | Feature | Description |
 |---|---|
-| 🎙️ Wake Word | Local **"Hey Jarvis"** detection — sleeps until called, auto-sleeps after 2 min of silence, and never streams audio while asleep. Opt-in, one-click download, toggle & manual sleep/wake from the UI |
+| 🎙️ Wake Word | Local **"Hey Judo"** detection — sleeps until called, auto-sleeps after 2 min of silence, and never streams audio while asleep. Opt-in, one-click download, toggle & manual sleep/wake from the UI |
 | ⚡ Instant Acknowledgment | Speaks a short, context-aware reply in **your language** the instant a longer task starts — no more silent waiting |
 | 🚀 Faster Live Engine | Runs on **Gemini 3.1 Flash Live** — roughly 2× faster time-to-first-word than the previous model |
 | 🧩 Self-Describing Skills | Actions and plugins share one shape (`TOOL` / `PLUGIN` dict + `run()`), auto-discovered at launch — adding or moving a skill is a single file, no core edits |
@@ -64,26 +64,30 @@ It's not just an assistant — it's an extension of your digital life.
 | 🎮 Game Updater | Checks and triggers game updates on Steam and Epic Games on demand |
 | 📂 File Processor | Read, summarize, and answer questions about local files |
 | 💻 Code Helper | Inline code review, debugging, and generation |
-| 🌐 Browser Control | Open URLs, navigate tabs, and interact with the browser by voice |
+| 🌐 Browser Control | Drives your actual, already-open Chrome/Edge/Brave/Vivaldi/Opera (real profile, real logins) via CDP — opens URLs, clicks, types and reads pages by voice, never a second separate browser window |
 | 📨 Send Message | Compose and send messages through WhatsApp, Telegram, and more |
 | 🎬 YouTube Control | Search, play, and control YouTube playback by voice |
 | 🖱️ Desktop Control | Taskbar, window management, and desktop-level operations |
 | 🧑‍💻 Silent Language Memory | Detects spoken language on first use — all future sessions adapt automatically |
-| 📱 Remote Dashboard | Control the assistant from your phone via QR code pairing |
+| 📱 Remote Dashboard | Control the assistant from your phone via QR code pairing — the phone's mic streams live into the same session running on your computer, so a command spoken on the phone executes on the computer |
 | ⚡ Auto-Start on Boot | Registers with the OS startup system (registry / LaunchAgent / .desktop) |
 | 📋 Clipboard Intelligence | Copy any text → floating panel with Translate / Summarise / Explain / Fix |
 | 🪪 Assistant Customization | Change the assistant name, your name, voice, and colour from the UI — takes effect immediately |
-| 🎛️ Media Control | Play/pause, skip, previous, stop, volume and mute for whatever is currently playing — Spotify, YouTube, or any player |
+| 🎛️ Media Control | Play/pause, skip, previous and stop for whatever is currently playing — Spotify, YouTube, or any player |
 | 🔁 Unit Converter | Converts length, weight, temperature and currency (live exchange rate) on request |
+| 🔑 Multi-Key Failover | Configure more than one Gemini API key — on a quota/rate-limit hit, JUDO rotates to the next one automatically instead of going down |
+| 🗣️ Gender-Aware Grammar | Self-reference and address use grammatically correct gender agreement (languages that require it), matched to your and JUDO's configured gender |
 
 ---
 
-## 🆕 What's New in Mark LIII
+## 🆕 What's New in RITESH LIII
 
-Mark LIII is about making JUDO **hands-free, faster, and easy to extend** — all universal: no hardcoded language, no bundled asset files, works the same on Windows, macOS and Linux.
+RITESH LIII is about making JUDO **hands-free, faster, and easy to extend** — all universal: no hardcoded language, no bundled asset files, works the same on Windows, macOS and Linux.
 
-### 🎙️ Wake Word — "Hey Jarvis"
-JUDO can now sit quietly until you call it. Turn on **⚙ → WAKE WORD** (a one-click, opt-in download of a tiny local model) and it goes to sleep: the microphone is processed **only on your machine** by a local detector, and nothing is sent to the cloud until it hears **"Hey Jarvis."** Once awake it listens normally, then **auto-sleeps after 2 minutes** of silence. You can also **sleep/wake it by clicking** in the settings. Because it's a *local* gate, background chatter — *"I'm coming!"* to someone at home — never wakes it. It costs **zero** when off (the model isn't even loaded), and the detection runs in its own thread, so nothing else in the app slows down.
+### 🎙️ Wake Word — "Hey Judo"
+JUDO can now sit quietly until you call it. Turn on **⚙ → WAKE WORD** (a one-click, opt-in download of a tiny local model) and it goes to sleep: the microphone is processed **only on your machine** by a local detector, and nothing is sent to the cloud until it hears **"Hey Judo."** Once awake it listens normally, then **auto-sleeps after 2 minutes** of silence. You can also **sleep/wake it by clicking** in the settings. Because it's a *local* gate, background chatter — *"I'm coming!"* to someone at home — never wakes it. It costs **zero** when off (the model isn't even loaded), and the detection runs in its own thread, so nothing else in the app slows down.
+
+> **Note:** the underlying detector (`openwakeword`) only ships pretrained models for a fixed set of phrases (alexa, hey_mycroft, hey_jarvis, …) — there is no pretrained "Hey Judo" model yet. Until a custom one is trained (openWakeWord's own training pipeline, run outside the app) and dropped in, ⚙ → WAKE WORD will report the wake model as unavailable rather than silently listening for the wrong word.
 
 ### ⚡ Instant Acknowledgment
 No more silent gaps. When you ask for something that takes a moment — reading an uploaded file, a web/research search, building code — JUDO **immediately** says one short, natural sentence *in your language* (*"Right away — going through that file now."*) and *then* runs the tool. Instant actions (opening an app, volume) stay snappy with no chatter.
@@ -94,13 +98,22 @@ The live session moved to **`gemini-3.1-flash-live-preview`**, cutting the time-
 ### 🧩 Self-Describing Skills — a Scalable Core
 Every bundled **action** now carries its own `TOOL` declaration in its own file (exactly like a drop-in **plugin's** `PLUGIN` dict), and the core auto-discovers them at launch. `main.py` no longer holds a giant list of tool definitions and dispatch branches — it shrank by hundreds of lines. Adding a new built-in skill, or promoting an `actions/*.py` file into a shareable plugin, is now just… moving a file.
 
-> Built on the Mark LI/LII foundation: the **🧩 Plugin System**, **♾️ Unlimited Sessions**, **🎨 Live Theming**, **〰️ Reactive HUD** and **🎙️ Voice Picker** are all still here.
+### 🔑 Multi-key failover
+A single Gemini API key means the assistant goes down the moment its free-tier quota is exhausted. `config/api_keys.json` now accepts a `gemini_api_keys` list instead of (or alongside) the single `gemini_api_key` field; on a quota/rate-limit (429) error the live connection loop rotates to the next configured key automatically and keeps going.
+
+### 🗣️ Gender-aware grammar
+Languages with grammatical gender (e.g. self-referring verb/adjective agreement) need to know whose gender is being expressed. JUDO now reads a configured gender for both the user and the assistant's own voice, and uses that to keep self-reference and address grammatically correct instead of defaulting to one gender for everyone.
+
+### 🌐 Real-browser automation
+`browser_control` used to open simple "go to this site" requests in the real, already-open browser but fall back to a second, separate, signed-out automation profile the moment an interactive action (click/type) was needed — so a flow like "open ChatGPT and ask it X" could end up typing into a browser window that was never logged in anywhere. It now drives the user's actual already-open Chrome/Edge/Brave/Vivaldi/Opera via the Chrome DevTools Protocol for every action, including plain navigation — one browser, real profile, no second window. If that browser is currently running without remote debugging enabled, it is restarted once on the same profile (cookies/history/extensions untouched) so it can be attached to; after that it's reused as-is.
+
+> Built on the RITESH LI/LII foundation: the **🧩 Plugin System**, **♾️ Unlimited Sessions**, **🎨 Live Theming**, **〰️ Reactive HUD** and **🎙️ Voice Picker** are all still here.
 
 ---
 
-## 🔄 The Foundation Update — in every Mark from LII
+## 🔄 The Foundation Update — in every release from LII
 
-These four landed across **Mark LII, LIII, LIV and LV at the same time**, after each of those releases had already shipped. They are not what any one of those versions originally introduced; they are the floor all of them now stand on, so moving up a Mark never costs you something the one below it had.
+These four landed across **RITESH LII, LIII, LIV and LV at the same time**, after each of those releases had already shipped. They are not what any one of those versions originally introduced; they are the floor all of them now stand on, so moving up a release never costs you something the one below it had.
 
 No new dependencies. No bundled asset files. No hardcoded language, and nothing that assumes one operating system.
 
@@ -188,23 +201,24 @@ It is held in memory only, deliberately: writing it to disk would make a fresh l
 
 * **The assistant could die on a log line.** Status lines carry emoji and arrows (`📤 file_controller → Moved: a.txt → Documents/`). On a non-UTF-8 console — cp1254 on a Turkish Windows, cp1251 on a Russian one, cp932 on a Japanese one — printing one raises `UnicodeEncodeError`, and because that print sits *after* the tool's own `try/except`, it escaped into the receive loop and took the session down.
 * **Every computer command paid for two model round trips.** `computer_settings` made an *entire second Gemini call, inside the tool*, purely to translate the request into one of its own action names — because the declaration only said "The action to perform", so the model rarely filled it in. When that second call failed, the fallback was `description.lower().replace(" ", "_")`, which turns the Turkish for "turn it down" into `sesi_kis` and straight into "Unknown action". The declaration now names all 56 actions and the rest is spelling tolerance handled locally by `difflib` in microseconds. When nothing matches it suggests real action names instead of dead-ending.
+* **Volume up/down could silently do almost nothing.** `media_control` and `computer_settings` both used to claim `volume_up`/`volume_down`/`mute`, with different step sizes and no shared undo state — the model picked between them non-deterministically, so a "turn it up" sometimes landed as a single, barely-perceptible key press. `media_control` now only handles actual playback transport (play/pause/skip/stop); `computer_settings` is the one place system volume lives.
 * An unresolvable saved audio device, or one the driver refuses to open, falls back to the system default and says so — on both the microphone and the speakers.
 * A rejected session-resumption handle is dropped after one attempt, so an expired handle can never be replayed on every retry and prevent the reconnect it exists to protect.
 
-
-
 ---
 
-## 🗺️ Mark Roadmap
+## 🗺️ RITESH Roadmap
 
-| Mark | Focus |
+Each release is named **RITESH \<roman numeral\>** — the version column below is that numeral.
+
+| Version | Focus |
 |---|---|
 | **XLIX** | Auto-start · clipboard intelligence · assistant customization |
 | **L** | Session memory · background monitoring · proactive 2.0 · instant vision |
 | **LI** | Plugin system · affective dialog · proactive audio · unlimited sessions |
 | **LII** | Voice picker · live theming · reactive HUD · recallable memory · undo · real confirmation · audio device picker · session continuity |
-| **LIII** | Wake word · Gemini 3.1 Flash Live · instant acknowledgment · self-describing action/plugin architecture |
-| *shared* | The last five above also shipped to LIII, LIV and LV at the same time — moving up a Mark never loses them |
+| **LIII** | Wake word · Gemini 3.1 Flash Live · instant acknowledgment · self-describing action/plugin architecture · multi-key rotation · gender-aware voice agreement · real-browser (CDP) automation |
+| *shared* | The last five above also shipped to LIII, LIV and LV at the same time — moving up a release never loses them |
 | **LIV+** | Plugin files: email · quiz mode · calendar · home assistant · 3D-printer · media control · unit converter · and more |
 
 ---
@@ -230,10 +244,10 @@ python main.py
 | --- | --- |
 | **OS** | Windows 10/11, macOS, or Linux |
 | **Python** | 3.11 or 3.12 |
-| **Microphone** | Required for voice interaction (and for the "Hey Jarvis" wake word) |
+| **Microphone** | Required for voice interaction (and for the "Hey Judo" wake word) |
 | **Speakers** | Required for voice replies |
-| **API Key** | Free Gemini API key (entered on first launch → `config/api_keys.json`) |
-| **Wake word** *(optional)* | One-click download from ⚙ → WAKE WORD (`openwakeword`, a few MB, fully local) |
+| **API Key** | Free Gemini API key (entered on first launch → `config/api_keys.json`; more than one can be configured for automatic failover) |
+| **Wake word** *(optional)* | One-click download from ⚙ → WAKE WORD (`openwakeword`, a few MB, fully local) — see the note in [What's New](#-whats-new-in-ritesh-liii) about the "Hey Judo" model |
 
 ---
 
@@ -246,7 +260,7 @@ Ai-Assistant/
 ├── setup.py                  # OS-aware installer (skips wrong-OS dependencies)
 ├── plugins/
 │   ├── _template.py          # Copy this to write a new plugin — one file, drop in, done
-│   ├── media_control.py      # Play/pause, skip, volume & mute for whatever is currently playing
+│   ├── media_control.py      # Play/pause, skip, previous, stop for whatever is currently playing
 │   ├── unit_converter.py     # Length, weight, temperature & live-rate currency conversion
 │   └── ...                   # Drop-in skills (each self-describes via a PLUGIN dict + run())
 ├── actions/                  # Bundled skills — each self-describes via a TOOL dict + handler
@@ -256,11 +270,11 @@ Ai-Assistant/
 │   ├── proactive.py          # Proactive 2.0 — time/context/rotation-aware check-ins
 │   ├── reminder.py           # OS-native scheduled notifications
 │   ├── system_monitor.py     # CPU / RAM / GPU / temperature telemetry
-│   ├── computer_settings.py  # Volume, brightness, WiFi, power (per-OS)
+│   ├── computer_settings.py  # Volume, brightness, WiFi, power (per-OS) — owns system volume/mute
 │   ├── computer_control.py   # Keyboard shortcuts, mouse, window management
 │   ├── open_app.py           # Application launcher (per-OS name map)
 │   ├── open_folder.py        # Folder navigation and shortcuts
-│   ├── browser_control.py    # Web browser control
+│   ├── browser_control.py    # Real-browser (CDP) web automation — one window, the user's own
 │   ├── file_controller.py    # File system operations
 │   ├── file_processor.py     # Document reading and summarization
 │   ├── send_message.py       # Messaging integration
@@ -272,11 +286,11 @@ Ai-Assistant/
 │   ├── dev_agent.py          # Developer task agent
 │   └── desktop.py            # Desktop and taskbar control
 ├── dashboard/
-│   ├── server.py             # FastAPI server behind the remote (phone / QR) dashboard
+│   ├── server.py             # FastAPI server behind the remote (phone / QR) dashboard — phone mic relays into the same Live session
 │   └── static/                # Dashboard front-end assets
 ├── memory/
 │   ├── memory_manager.py     # Load/save long_term.json — sessions, monitors, identity
-│   ├── config_manager.py     # api_keys.json access — key, OS, name, voice, colour, toggles
+│   ├── config_manager.py     # api_keys.json access — key(s), OS, name, voice, gender, colour, toggles
 │   └── long_term.json        # Persistent store: identity, preferences, projects, sessions, monitors
 ├── core/
 │   ├── prompt.txt            # Assistant personality and tool-routing rules
@@ -285,13 +299,14 @@ Ai-Assistant/
 │   ├── undo.py               # One shared undo stack — actions register how to reverse themselves
 │   ├── confirm.py            # Irreversible-action gate — the token is issued by the UI, not the model
 │   ├── audio_devices.py      # Microphone / speaker list — filtered, measured, resolved by name
+│   ├── user_paths.py         # Resolves user directories (Desktop, Documents, …) consistently across OSes
 │   ├── plugin_loader.py      # Plugin engine — discovery, validation, crash isolation
 │   ├── action_loader.py      # Bundled-action engine — the built-in twin of plugin_loader
 │   ├── installer.py          # OS-aware dependency installation helpers
-│   └── wake_word.py          # Local "Hey Jarvis" detector — own thread, offline, opt-in
+│   └── wake_word.py          # Local "Hey Judo" detector — own thread, offline, opt-in
 └── config/
     ├── api_keys.example.json # Template for local API key configuration
-    └── api_keys.json         # API key, OS setting, assistant name, user name, voice, UI colour, toggles
+    └── api_keys.json         # API key(s), OS setting, assistant name, user name, gender, voice, UI colour, toggles
 ```
 
 ---

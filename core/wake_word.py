@@ -1,5 +1,5 @@
 """
-Local wake-word detection for JUDO ("Hey Jarvis").
+Local wake-word detection for JUDO ("Hey Judo").
 
 Design goals:
   • ZERO cost when the feature is off — openwakeword is imported ONLY inside
@@ -12,8 +12,15 @@ Design goals:
   • Fully local & offline — audio fed here never leaves the machine; there is no
     network call except the one-time model download the user triggers from the UI.
 
-openwakeword ships small ONNX models (a few MB each) and runs comfortably on a
-CPU. The pretrained wake phrase used here is "Hey Jarvis".
+openwakeword only ships a fixed set of PRETRAINED phrases (alexa, hey_mycroft,
+hey_jarvis, ...) — there is no pretrained "hey_judo" model. WAKE_MODEL below is
+set to "hey_judo" to match JUDO's own name, but that model does not exist yet:
+is_ready()/install_and_download() will simply report the feature as not
+available until a custom "hey_judo*.onnx" model is trained (openWakeWord's own
+custom-model pipeline: synthetic TTS positive samples + their negative dataset,
+trained outside this app — see their docs) and dropped into openwakeword's
+resources/models directory. Until then, wake word is effectively disabled
+rather than silently listening for the wrong word.
 """
 from __future__ import annotations
 
@@ -24,8 +31,10 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-# Pretrained openwakeword model that listens for "Hey Jarvis".
-WAKE_MODEL = "hey_jarvis"
+# Model name JUDO listens for. NOT one of openwakeword's pretrained models
+# (see module docstring) — a "hey_judo*.onnx" file must be trained and placed
+# in openwakeword's models directory before this actually detects anything.
+WAKE_MODEL = "hey_judo"
 # Score in [0,1]; above this counts as a detection. Tunable per environment.
 DEFAULT_THRESHOLD = 0.5
 # Mic frames arrive at 16 kHz int16; this is just the detector's input rate.
@@ -137,7 +146,7 @@ class WakeWordDetector:
         self._ready = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="WakeWordThread")
         self._thread.start()
-        self._logger("Wake word: listening for 'Hey Jarvis'.")
+        self._logger("Wake word: listening for 'Hey Judo'.")
         return True
 
     def stop(self) -> None:
@@ -178,9 +187,9 @@ class WakeWordDetector:
                 scores = self._model.predict(np.asarray(frame, dtype=np.int16))
                 score = 0.0
                 if isinstance(scores, dict):
-                    # match the jarvis model regardless of exact key suffix
+                    # match the judo model regardless of exact key suffix
                     for k, v in scores.items():
-                        if "jarvis" in k.lower():
+                        if "judo" in k.lower():
                             score = max(score, float(v))
                     if score == 0.0 and scores:
                         score = max(float(v) for v in scores.values())
