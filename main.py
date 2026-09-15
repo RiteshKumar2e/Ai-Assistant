@@ -72,7 +72,7 @@ from actions.background_monitor import (
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
     get_brief_enabled, get_voice, get_wake_word_enabled, save_wake_word_enabled,    get_input_device, get_output_device,
-    get_user_gender, get_gemini_api_keys,
+    get_user_gender, get_gemini_api_keys, get_voice_gender,
 )
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
@@ -780,11 +780,26 @@ class JudoLive:
                       "language. Never an archaic or aristocratic form, and never "
                       "the form from a different language than the one you are "
                       "speaking in this sentence.")
+        # Self-gender agreement — in a language with grammatical gender for
+        # the SPEAKER (Hindi verb conjugation being the clearest case: "karti
+        # hoon" vs "karta hoon", "rahi hoon" vs "raha hoon"), the assistant's
+        # own sentences should agree with how its configured voice sounds,
+        # not default to masculine regardless of voice. This is entirely
+        # separate from _addr above, which is about the USER's honorific.
+        _asst_gender = get_voice_gender()
+        _self_gender_rule = (
+            f"SELF-GENDER: Your voice is {_asst_gender}. In any language where "
+            f"verbs/adjectives referring to yourself change by gender (e.g. Hindi "
+            f"\"karti hoon\"/\"karta hoon\", \"rahi hoon\"/\"raha hoon\"), always use "
+            f"the {_asst_gender.upper()} form for yourself. This is about your own "
+            f"speech only — it never changes how you address the user."
+        )
         identity_ctx = (
             f"[IDENTITY]\n"
             f"Your name is {self._asst_name}. "
             f"Always refer to yourself as {self._asst_name}.\n"
-            f"{_addr}\n\n"
+            f"{_addr}\n"
+            f"{_self_gender_rule}\n\n"
         )
 
         parts = [time_ctx, identity_ctx]

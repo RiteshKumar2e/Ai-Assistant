@@ -135,6 +135,24 @@ def get_voice() -> str:
     return v if v in AVAILABLE_VOICES else DEFAULT_VOICE
 
 
+# Grammatical gender of each prebuilt voice — used only so that in languages
+# with gendered self-reference (e.g. Hindi verb conjugation: "karti hoon" vs
+# "karta hoon") the assistant's own speech matches how its voice sounds,
+# instead of defaulting to masculine regardless of voice. Per Google's voice
+# descriptions: Kore/Zephyr/Aoede/Leda read as female, Puck/Charon/Fenrir/Orus
+# as male.
+_VOICE_GENDER = {
+    "Kore": "female", "Zephyr": "female", "Aoede": "female", "Leda": "female",
+    "Puck": "male",   "Charon": "male",   "Fenrir": "male",  "Orus": "male",
+}
+
+
+def get_voice_gender(voice_name: str | None = None) -> str:
+    """'male' | 'female' for the given (or currently configured) voice."""
+    v = voice_name or get_voice()
+    return _VOICE_GENDER.get(v, "female")
+
+
 def save_voice(voice_name: str) -> None:
     """Persist the chosen Live voice. Unknown names collapse to the default so a
     bad value can never reach the API and break the session."""
