@@ -75,6 +75,9 @@ It's not just an assistant — it's an extension of your digital life.
 | 🪪 Assistant Customization | Change the assistant name, your name, voice, and colour from the UI — takes effect immediately |
 | 🎛️ Media Control | Play/pause, skip, previous and stop for whatever is currently playing — Spotify, YouTube, or any player |
 | 🔁 Unit Converter | Converts length, weight, temperature and currency (live exchange rate) on request |
+| 📅 Calendar / Agenda | Local event calendar — add, list today's/tomorrow's/this week's agenda, remove — no external account needed |
+| 🧠 Quiz Mode | Voice-driven quiz on any topic — generates questions locally, checks spoken answers, keeps score |
+| 📧 Email (Gmail) | Sends email through the user's own, already-open browser and real, already-logged-in Google account — no password ever stored |
 | 🔑 Multi-Key Failover | Configure more than one Gemini API key — on a quota/rate-limit hit, JUDO rotates to the next one automatically instead of going down |
 | 🗣️ Gender-Aware Grammar | Self-reference and address use grammatically correct gender agreement (languages that require it), matched to your and JUDO's configured gender |
 
@@ -262,6 +265,9 @@ Ai-Assistant/
 │   ├── _template.py          # Copy this to write a new plugin — one file, drop in, done
 │   ├── media_control.py      # Play/pause, skip, previous, stop for whatever is currently playing
 │   ├── unit_converter.py     # Length, weight, temperature & live-rate currency conversion
+│   ├── calendar_agenda.py    # Local calendar — add/list/remove events, ties into reminder for alerts
+│   ├── quiz_mode.py          # Voice quiz — local question generation, scoring, multi-turn state
+│   ├── send_email.py         # Sends Gmail via the user's real logged-in browser session, no password stored
 │   └── ...                   # Drop-in skills (each self-describes via a PLUGIN dict + run())
 ├── actions/                  # Bundled skills — each self-describes via a TOOL dict + handler
 │   ├── web_search.py         # Gemini + DDG parallel search (news, research, price, compare)
