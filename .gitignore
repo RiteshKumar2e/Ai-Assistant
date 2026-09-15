@@ -58,3 +58,4 @@ desktop.ini
 logs/
 downloads/
 screenshots/
+.wakeword_venv/

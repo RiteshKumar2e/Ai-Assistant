@@ -61,11 +61,28 @@ def models_dir() -> Path | None:
         return None
 
 
-def _has_model(name: str) -> bool:
+def _model_path(name: str) -> Path | None:
+    """Full path to a model file matching `name*.onnx`/`.tflite`, or None.
+
+    openwakeword.Model() only resolves a bare name (e.g. "hey_judo") against
+    its OWN pretrained registry — a name outside that list raises ValueError
+    even if a matching file sits right there in resources/models. Passing the
+    resolved full path instead skips that registry lookup entirely (Model()
+    accepts any existing path as-is), which is the only way a custom model
+    ever loads.
+    """
     d = models_dir()
     if not d or not d.is_dir():
-        return False
-    return any(d.glob(f"{name}*.onnx")) or any(d.glob(f"{name}*.tflite"))
+        return None
+    for pattern in (f"{name}*.onnx", f"{name}*.tflite"):
+        match = next(d.glob(pattern), None)
+        if match:
+            return match
+    return None
+
+
+def _has_model(name: str) -> bool:
+    return _model_path(name) is not None
 
 
 def is_ready() -> bool:
@@ -145,9 +162,13 @@ class WakeWordDetector:
         Safe to call again — a no-op if already running. Never raises."""
         if self._running:
             return True
+        path = _model_path(WAKE_MODEL)
+        if path is None:
+            self._logger(f"Wake word: no '{WAKE_MODEL}*.onnx' model file found.")
+            return False
         try:
             from openwakeword.model import Model
-            self._model = Model(wakeword_models=[WAKE_MODEL], inference_framework="onnx")
+            self._model = Model(wakeword_models=[str(path)], inference_framework="onnx")
         except Exception as e:
             self._logger(f"Wake word: could not load model — {e}")
             self._model = None
