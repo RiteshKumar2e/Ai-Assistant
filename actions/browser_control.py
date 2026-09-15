@@ -8,12 +8,14 @@ import platform
 import shutil
 import subprocess
 import threading
-import webbrowser
+import time
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
 from playwright.async_api import (
     async_playwright,
+    Browser,
     BrowserContext,
     Page,
     Playwright,
@@ -369,79 +371,98 @@ _MAC_APP_NAMES: dict[str, str] = {
 # Windows registry lookup names for browsers whose spec has no explicit binary
 _WIN_EXE_HINTS: dict[str, str] = {"chrome": "chrome", "edge": "msedge"}
 
+# ── CDP attach-to-real-browser support ───────────────────────────────────────
+# Chromium-based browsers only read --remote-debugging-port at startup, and a
+# single-instance browser that's already running just hands a second launch's
+# args to the existing window and exits — so Playwright's launch_persistent_
+# context() can never attach to whatever Chrome/Edge/etc. the user already has
+# open. Instead of falling back to a second, separate, logged-out profile, we
+# talk to the user's REAL browser over CDP: reuse it if it's already
+# debuggable, otherwise (re)launch that exact browser on its real profile with
+# the debug flag on, so there is only ever ONE window and it behaves exactly
+# like the browser the user is used to (same history, cookies, extensions).
+_CDP_PORTS: dict[str, int] = {
+    "chrome": 9222, "edge": 9223, "brave": 9224,
+    "vivaldi": 9225, "opera": 9226, "operagx": 9227,
+}
 
-def _open_native(url: str, browser_name: Optional[str]) -> str:
-    """
-    Opens the user's REAL browser normally — with their own profile,
-    logged-in accounts and extensions. No automation attaches, so an
-    about:blank tab or a blank profile NEVER shows up.
-    If url is empty the browser starts with no URL (its own start page /
-    session restore) — exactly as if the user had opened it themselves.
-    Works on all three of Windows / macOS / Linux.
-    """
-    url = _normalize_url(url) if url and url.strip() else ""
-    if url == "about:blank":
-        url = ""
+_PROCESS_IMAGE: dict[str, dict[str, str]] = {
+    "Windows": {"chrome": "chrome.exe", "edge": "msedge.exe", "brave": "brave.exe",
+                "vivaldi": "vivaldi.exe", "opera": "opera.exe", "operagx": "opera.exe"},
+    "Darwin":  {"chrome": "Google Chrome", "edge": "Microsoft Edge", "brave": "Brave Browser",
+                "vivaldi": "Vivaldi", "opera": "Opera", "operagx": "Opera"},
+    "Linux":   {"chrome": "chrome", "edge": "msedge", "brave": "brave",
+                "vivaldi": "vivaldi", "opera": "opera", "operagx": "opera"},
+}
 
-    name = None
-    if browser_name:
-        name = _ALIASES.get(browser_name.lower().strip(), browser_name.lower().strip())
-    elif not url:
-        # No URL → only a window will open; needs the default browser's exe
-        name = _detect_default_browser()
 
-    # Specific browser → launch its own executable, exactly like the user would.
-    if name:
-        if _OS == "Darwin":
-            app = _MAC_APP_NAMES.get(name)
-            if app:
-                cmd = ["open", "-a", app] + ([url] if url else [])
-                try:
-                    subprocess.run(cmd, check=True, timeout=10)
-                    return f"Opened in {name}: {url}" if url else f"Opened {name}."
-                except Exception as e:
-                    print(f"[Browser] 'open -a {app}' failed ({e}), trying binary…")
+def _cdp_alive(port: int) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1.5):
+            return True
+    except Exception:
+        return False
 
-        spec = _resolve_browser(name)
-        exe  = spec.get("exe") if spec else None
-        if not exe and _OS == "Windows":
-            if name in ("opera", "operagx"):
-                exe = _find_opera_windows()
-            else:
-                exe = _find_exe_windows(_WIN_EXE_HINTS.get(name, name))
-        if exe:
-            try:
-                subprocess.Popen(
-                    [exe, url] if url else [exe],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-                return f"Opened in {name}: {url}" if url else f"Opened {name}."
-            except Exception as e:
-                print(f"[Browser] Native launch failed for {name}: {e}")
-        print(f"[Browser] '{name}' not found — falling back to default browser.")
 
-    if not url:
-        return "Could not find a browser to open."
+def _wait_for_cdp(port: int, timeout: float = 20.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _cdp_alive(port):
+            return True
+        time.sleep(0.3)
+    return False
 
-    # Default browser via the OS — exactly like the user clicking a link.
+
+def _is_running(browser_name: str) -> bool:
+    image = _PROCESS_IMAGE.get(_OS, {}).get(browser_name)
+    if not image:
+        return False
     try:
         if _OS == "Windows":
-            os.startfile(url)                       # ShellExecute → default browser
-        elif _OS == "Darwin":
-            subprocess.run(["open", url], check=True, timeout=10)
-        else:
-            subprocess.Popen(
-                ["xdg-open", url],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-        return f"Opened in your default browser: {url}"
+            out = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout
+            return image.lower() in out.lower()
+        out = subprocess.run(["pgrep", "-f", image], capture_output=True, text=True, timeout=5)
+        return out.returncode == 0
     except Exception:
-        try:
-            if webbrowser.open(url):
-                return f"Opened in your default browser: {url}"
-        except Exception:
-            pass
-        return f"Could not open a browser for: {url}"
+        return False
+
+
+def _terminate(browser_name: str) -> None:
+    image = _PROCESS_IMAGE.get(_OS, {}).get(browser_name)
+    if not image:
+        return
+    try:
+        if _OS == "Windows":
+            subprocess.run(["taskkill", "/IM", image, "/F"], capture_output=True, timeout=10)
+        else:
+            subprocess.run(["pkill", "-f", image], capture_output=True, timeout=10)
+    except Exception:
+        pass
+
+
+def _resolve_exe_path(name: str) -> Optional[str]:
+    """Best-effort path to the real browser executable, for spawning it
+    ourselves with the CDP debug flag (as opposed to Playwright's own
+    launch(), which doesn't expose a path for channel-resolved browsers)."""
+    if _OS == "Darwin":
+        app = _MAC_APP_NAMES.get(name)
+        if app:
+            app_dir = Path("/Applications") / f"{app}.app" / "Contents" / "MacOS"
+            if app_dir.exists():
+                bins = [b for b in app_dir.iterdir() if b.is_file()]
+                if bins:
+                    return str(bins[0])
+    spec = _resolve_browser(name)
+    exe = spec.get("exe") if spec else None
+    if not exe and _OS == "Windows":
+        if name in ("opera", "operagx"):
+            exe = _find_opera_windows()
+        else:
+            exe = _find_exe_windows(_WIN_EXE_HINTS.get(name, name))
+    return exe
 
 
 def _looks_like_dead_context(e: Exception) -> bool:
@@ -471,15 +492,13 @@ class _BrowserSession:
         self._context: BrowserContext | None = None
         self._page:    Page           | None = None
 
-        # Set once the REAL browser profile proves unusable this session (most
-        # commonly: the user already has that browser open under their own
-        # account — Chromium's single-instance behavior hands our launch args
-        # to that existing window and lets our own spawned process exit, so
-        # Playwright is left holding a context whose underlying browser is
-        # already gone). Once that happens there is no point retrying the real
-        # profile again for this session — every subsequent launch goes
-        # straight to the isolated JUDO automation profile instead.
-        self._real_profile_failed = False
+        # Set when self._context comes from connect_over_cdp() — i.e. we are
+        # driving the user's ACTUAL browser (real profile, possibly windows/
+        # tabs they opened themselves) rather than a context Playwright itself
+        # launched. Closing that context/browser must be reserved for an
+        # explicit user "close" request — never as a side effect of error
+        # recovery, or a JUDO hiccup would slam the user's whole browser shut.
+        self._cdp_browser: Browser | None = None
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -513,7 +532,15 @@ class _BrowserSession:
             asyncio.run_coroutine_threadsafe(self._async_close(), self._loop).result(10)
 
     async def _async_close(self):
-        if self._context:
+        # Explicit close: if we're attached to the user's real browser via
+        # CDP, actually close it (that's what "close chrome" means); a
+        # Playwright-launched context (Firefox/Safari) closes the same way.
+        if self._cdp_browser is not None:
+            try:
+                await self._cdp_browser.close()
+            except Exception:
+                pass
+        elif self._context:
             try:
                 await self._context.close()
             except Exception:
@@ -523,7 +550,7 @@ class _BrowserSession:
                 await self._pw.stop()
             except Exception:
                 pass
-        self._context = self._page = None
+        self._context = self._page = self._cdp_browser = None
 
     async def _adopt_page(self) -> Page:
         """
@@ -550,7 +577,6 @@ class _BrowserSession:
 
         engine_name = self._spec["engine"]
         exe         = self._spec["exe"]
-        channel     = self._spec["channel"]
         engine_obj  = getattr(self._pw, engine_name)
 
         if engine_name == "firefox":
@@ -593,83 +619,87 @@ class _BrowserSession:
             print(f"[Browser] ✅ Safari launched")
             return
 
+        # Chromium browsers: always drive the user's REAL, already-existing
+        # browser over CDP — never a second, separate, logged-out one.
+        port  = _CDP_PORTS.get(self.browser_name, 9222)
+        label = f"{self.browser_name}" + (f" @ {exe}" if exe else "")
+
+        # 1) Already debuggable — either JUDO started it earlier this machine
+        #    session, or the user launched it with the flag themselves.
+        #    Attach and reuse exactly what's already open, no restart at all.
+        if _cdp_alive(port):
+            await self._attach_cdp(port, label)
+            return
+
+        # 2) Same browser is running WITHOUT debugging enabled. Chromium only
+        #    reads --remote-debugging-port at startup, and its single-instance
+        #    lock means a second launch just hands its args to that existing
+        #    window and exits — so the only way in is to restart it once, on
+        #    the SAME real profile (tabs restore, cookies/history/extensions
+        #    are untouched) rather than opening a separate blank profile.
+        if _is_running(self.browser_name):
+            print(f"[Browser] {self.browser_name} is already running without "
+                  f"remote debugging enabled — restarting it once on the SAME "
+                  f"profile (cookies/history/extensions/logins are untouched; "
+                  f"open tabs restore only if 'Continue where you left off' is "
+                  f"enabled in {self.browser_name}'s settings) so automation "
+                  f"controls your actual browser instead of a separate one. "
+                  f"This only happens the first time per session.")
+            _terminate(self.browser_name)
+            for _ in range(20):
+                if not _is_running(self.browser_name):
+                    break
+                await asyncio.sleep(0.25)
+
+        exe = exe or _resolve_exe_path(self.browser_name)
+        if not exe:
+            raise RuntimeError(f"Could not locate an executable for {self.browser_name}.")
+
         profile = _real_profile_dir(self.browser_name)
-
-        kwargs = {
-            "headless":    False,
-            "slow_mo":     0,
-            "viewport":    None,
-            "no_viewport": True,
-            "timeout":     25_000,
-            "args": [
-                "--start-maximized",
-                "--disable-blink-features=AutomationControlled",
-                "--no-first-run",
-                "--disable-default-apps",
-                "--no-default-browser-check",
-            ],
-        }
-
-        if exe:
-            kwargs["executable_path"] = exe
-        elif channel:
-            kwargs["channel"] = channel
-
-        label = (
-            f"{self.browser_name}"
-            + (f"/{channel}" if channel else "")
-            + (f" @ {exe}" if exe else "")
+        subprocess.Popen(
+            [exe,
+             f"--remote-debugging-port={port}",
+             f"--user-data-dir={profile}",
+             "--no-first-run",
+             "--disable-blink-features=AutomationControlled",
+             "--disable-default-apps",
+             "--no-default-browser-check"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
 
-        if not self._real_profile_failed:
-            try:
-                self._context = await engine_obj.launch_persistent_context(profile, **kwargs)
-                self._page = await self._adopt_page()
-                # Dead-on-arrival check: if the real browser was already running
-                # under the user's own account, Chromium's single-instance
-                # hand-off can hand back a context/page whose underlying process
-                # has already exited. That only shows up on first real use, so
-                # touch the page now instead of waiting for the user's next
-                # command to discover it.
-                await self._page.title()
-                print(f"[Browser] ✅ Launched [{label}] profile={profile}")
-                return
-            except Exception as e:
-                print(f"[Browser] ⚠️  Real profile unusable for {label} ({e}) — "
-                      f"probably already open under your own account. Switching "
-                      f"to JUDO's own automation profile for this session.")
-                self._real_profile_failed = True
-                await self._discard_dead_context()
+        if not _wait_for_cdp(port, timeout=20.0):
+            raise RuntimeError(f"{self.browser_name} did not open its debug port in time.")
 
-        # Real profile is unavailable or proven dead this session — use a
-        # persistent JUDO automation profile instead. It has no conflict with
-        # a normally-running browser, and accounts logged in here once stay
-        # logged in on later sessions too.
-        judo_profile = str(Path.home() / ".judo_profiles" / self.browser_name)
-        Path(judo_profile).mkdir(parents=True, exist_ok=True)
-        print(f"[Browser] Using JUDO profile: {judo_profile}")
+        await self._attach_cdp(port, label)
 
-        try:
-            self._context = await engine_obj.launch_persistent_context(judo_profile, **kwargs)
-            self._page = await self._adopt_page()
-            print(f"[Browser] ✅ Launched [{label}] with JUDO profile "
-                  f"(sign-ins persist across sessions)")
-        except Exception as e2:
-            raise RuntimeError(f"Could not launch {self.browser_name}: {e2}") from e2
-
+    async def _attach_cdp(self, port: int, label: str) -> None:
+        """Connects to the user's real, already-running browser over CDP and
+        adopts its existing (visible, logged-in) context/tab — as opposed to
+        launching a brand new context, which is what caused a second, blank,
+        logged-out browser window to appear alongside the user's real one."""
+        browser = await self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        self._cdp_browser = browser
+        ctx = browser.contexts[0] if browser.contexts else await browser.new_context(no_viewport=True)
+        self._context = ctx
+        pages = ctx.pages
+        self._page = pages[0] if pages else await ctx.new_page()
+        print(f"[Browser] ✅ Attached to your actual {label} via CDP :{port}")
 
     async def _discard_dead_context(self) -> None:
         """Drop a context/page Playwright reports as closed/disconnected so the
         next _launch() call starts fresh instead of reusing a dead reference —
         this is what turns 'the browser died underneath us' into a transparent
-        relaunch instead of the same error repeating on every command."""
-        try:
-            if self._context:
+        relaunch instead of the same error repeating on every command.
+        Never closes a CDP-attached context here: that's the user's real
+        browser, and a mere reconnect shouldn't risk closing all their tabs."""
+        if self._context is not None and self._cdp_browser is None:
+            try:
                 await self._context.close()
-        except Exception:
-            pass
+            except Exception:
+                pass
         self._context = None
         self._page = None
+        self._cdp_browser = None
 
     async def _get_page(self) -> Page:
         await self._launch()
@@ -683,8 +713,7 @@ class _BrowserSession:
             if not _looks_like_dead_context(e):
                 raise
             print(f"[Browser] {self.browser_name} session died underneath us "
-                  f"({e}) — relaunching on JUDO's own profile.")
-            self._real_profile_failed = True
+                  f"({e}) — reattaching to your real browser.")
             await self._discard_dead_context()
             await self._launch()
             self._page = await self._context.new_page()
@@ -940,10 +969,9 @@ class _SessionRegistry:
     """Manages all active browser sessions."""
 
     def __init__(self):
-        self._sessions:        dict[str, _BrowserSession] = {}
-        self._active_browser:  str                        = ""
-        self._lock             = threading.Lock()
-        self._last_native_url: str                        = ""
+        self._sessions:       dict[str, _BrowserSession] = {}
+        self._active_browser: str                        = ""
+        self._lock            = threading.Lock()
 
     def has(self, browser_name: str | None = None) -> bool:
         """Is there an active automation session for this browser (or any)?"""
@@ -952,14 +980,6 @@ class _SessionRegistry:
                 return bool(self._sessions)
             name = _ALIASES.get(browser_name.lower().strip(), browser_name.lower().strip())
             return name in self._sessions
-
-    def note_native_url(self, url: str) -> None:
-        self._last_native_url = url
-
-    def pop_native_url(self) -> str:
-        """Returns the last natively-opened URL once (consumed to avoid repeats)."""
-        url, self._last_native_url = self._last_native_url, ""
-        return url
 
     def _get_or_create(self, browser_name: str) -> _BrowserSession:
         with self._lock:
@@ -1053,47 +1073,13 @@ def browser_control(
         _log(player, result)
         return result
 
-    # ── Navigation is ALWAYS native ──────────────────────────────────────────
-    # go_to / search / new_tab open the site in the user's own browser —
-    # their own profile, logged-in accounts and start page; exactly as if the
-    # user had opened it themselves. A controlled window with about:blank never
-    # opens here. The only exception: if an automation flow is already running,
-    # navigation continues in that window (so multi-step tasks aren't split).
-    if action in ("go_to", "search", "new_tab"):
-        if _registry.has(browser):
-            sess = _registry.get(browser)
-            try:
-                if action == "search":
-                    result = sess.run(sess.search(params.get("query", ""),
-                                                  params.get("engine", "google")))
-                elif action == "new_tab":
-                    result = sess.run(sess.new_tab(params.get("url", "")))
-                else:
-                    result = sess.run(sess.go_to(params.get("url", "")))
-            except concurrent.futures.TimeoutError:
-                result = f"Browser action '{action}' timed out (60s)."
-            except Exception as e:
-                result = f"Browser error ({action}): {e}"
-            _log(player, result)
-            return result
-
-        if action == "search":
-            base    = _SEARCH_ENGINES.get(params.get("engine", "google").lower(),
-                                          _SEARCH_ENGINES["google"])
-            nav_url = base + params.get("query", "").replace(" ", "+")
-        else:
-            nav_url = params.get("url", "").strip()
-
-        result = _open_native(nav_url, browser)
-        if result.startswith("Opened") and nav_url:
-            _registry.note_native_url(_normalize_url(nav_url))
-        _log(player, result)
-        return result
-
-    # ── Interactive actions (click/type/read…) ───────────────────────────────
-    # These require a physically controllable browser; the automation window
-    # only opens here, and as soon as it opens it goes to the user's last
-    # navigated page — it doesn't sit on a blank page.
+    # ── Every action drives ONE browser: the user's actual, already-open one ──
+    # go_to / search / new_tab used to open natively (a separate, uncontrolled
+    # window) while click/type attached automation to a second, isolated
+    # profile — two different windows for one task. Now everything, including
+    # plain navigation, runs through the same CDP-attached session, which is
+    # the user's real browser (real profile, logged-in accounts, extensions).
+    # There is never a second, blank window.
     try:
         sess = _registry.get(browser)
     except Exception as e:
@@ -1101,14 +1087,23 @@ def browser_control(
         _log(player, result)
         return result
 
-    try:
-        last = _registry.pop_native_url()
-        if last:
-            try:
-                sess.run(sess.go_to(last))
-            except Exception as e:
-                print(f"[Browser] Could not resume last page ({last}): {e}")
+    if action in ("go_to", "search", "new_tab"):
+        try:
+            if action == "search":
+                result = sess.run(sess.search(params.get("query", ""),
+                                              params.get("engine", "google")))
+            elif action == "new_tab":
+                result = sess.run(sess.new_tab(params.get("url", "")))
+            else:
+                result = sess.run(sess.go_to(params.get("url", "")))
+        except concurrent.futures.TimeoutError:
+            result = f"Browser action '{action}' timed out (60s)."
+        except Exception as e:
+            result = f"Browser error ({action}): {e}"
+        _log(player, result)
+        return result
 
+    try:
         if action == "click":
             result = sess.run(sess.click(params.get("selector"), params.get("text")))
         elif action == "type":
@@ -1160,7 +1155,7 @@ def _log(player, text: str):
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "browser_control",
-    "description": "Controls any web browser. Use for: opening websites, searching the web, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Simple open/search requests launch the user's own browser normally (their real profile and logged-in accounts); interactive actions (click, type, fill_form...) attach an automation browser. Always pass the 'browser' parameter when the user specifies a browser (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
+    "description": "Controls any web browser. Use for: opening websites, searching the web, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Every action — including plain go_to/search — runs in the user's own already-open browser (real profile, logged-in accounts, extensions); it never opens a second, separate, logged-out browser window. If that browser is running without automation support enabled, it is restarted once on the same profile (tabs restore) so it can be driven directly; after that it's reused as-is. Always pass the 'browser' parameter when the user specifies a browser (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
