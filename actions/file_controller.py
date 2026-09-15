@@ -11,6 +11,7 @@ except ImportError:
     _SEND2TRASH = False
 
 from core.undo import push_undo
+from core import user_paths
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
@@ -106,46 +107,22 @@ def _is_safe_path(target: Path) -> bool:
         return False
 
 def _get_desktop() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_DESKTOP_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Desktop"
+    return user_paths.desktop()
 
 def _get_downloads() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_DOWNLOAD_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Downloads"
+    return user_paths.downloads()
 
 def _get_documents() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_DOCUMENTS_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Documents"
+    return user_paths.documents()
 
 def _get_pictures() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_PICTURES_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Pictures"
+    return user_paths.pictures()
 
 def _get_music() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_MUSIC_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Music"
+    return user_paths.music()
 
 def _get_videos() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_VIDEOS_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Videos"
+    return user_paths.videos()
 
 
 def _resolve_path(raw: str) -> Path:
@@ -158,10 +135,24 @@ def _resolve_path(raw: str) -> Path:
         "videos":    _get_videos(),
         "home":      Path.home(),
     }
-    lower = raw.strip().lower()
+    cleaned = raw.strip().strip('"').strip("'")
+    lower   = cleaned.lower()
     if lower in shortcuts:
         return shortcuts[lower]
-    return Path(raw).expanduser()
+
+    p = Path(os.path.expandvars(cleaned)).expanduser()
+    if p.is_absolute():
+        return p
+
+    # Relative paths ("Projects", "desktop/Projects"). Two rules, both about
+    # what a SPOKEN path means: a leading shortcut word anchors the rest to
+    # that folder, and anything else is meant to land on the Desktop — never
+    # inside the assistant's own install directory, which is where the
+    # process happens to be running and is never what the user meant.
+    parts = p.parts
+    if parts and parts[0].lower() in shortcuts:
+        return shortcuts[parts[0].lower()].joinpath(*parts[1:])
+    return _get_desktop() / p
 
 def _format_size(b: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:

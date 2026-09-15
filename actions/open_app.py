@@ -248,6 +248,13 @@ def open_app(
     if not app_name:
         return "No application name provided."
 
+    # Claude Code is a coding agent, not an ordinary app: it is either a CLI or
+    # a VS Code extension, so there is no window to launch by name. Hand it to
+    # the opener that knows both shapes rather than failing to find an exe.
+    if app_name.strip().lower().replace("-", " ") in ("claude", "claude code", "claude agent"):
+        from actions.open_folder import open_folder
+        return open_folder({"folder_path": "desktop", "open_in": "claude"}, player)
+
     launcher = _OS_LAUNCHERS.get(_SYSTEM)
     if launcher is None:
         return f"Unsupported operating system: {_SYSTEM}"

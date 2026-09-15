@@ -4,6 +4,7 @@ import json
 import re
 import time
 from pathlib import Path
+from core import user_paths
 
 
 def get_base_dir():
@@ -13,7 +14,7 @@ def get_base_dir():
 
 BASE_DIR           = get_base_dir()
 API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
-DESKTOP            = Path.home() / "Desktop"
+DESKTOP            = user_paths.desktop()
 MAX_BUILD_ATTEMPTS = 3
 GEMINI_MODEL       = "gemini-flash-latest"
 
@@ -95,7 +96,7 @@ def _has_error(output: str) -> bool:
 def _take_screenshot() -> Path | None:
     try:
         import pyautogui
-        screenshot_path = Path.home() / "Desktop" / f"judo_debug_{int(time.time())}.png"
+        screenshot_path = user_paths.desktop() / f"judo_debug_{int(time.time())}.png"
         screenshot = pyautogui.screenshot()
         screenshot.save(str(screenshot_path))
         print(f"[Code] 📸 Screenshot: {screenshot_path}")

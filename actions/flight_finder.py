@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from config import is_windows, is_mac, is_linux
+from core import user_paths
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -276,7 +277,7 @@ def _format_text_report(
 def _save_to_desktop(content: str, origin: str, destination: str) -> str:
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"flights_{origin}_{destination}_{ts}.txt".replace(" ", "_")
-    desktop  = Path.home() / "Desktop"
+    desktop  = user_paths.desktop()
     desktop.mkdir(parents=True, exist_ok=True)
     filepath = desktop / filename
 

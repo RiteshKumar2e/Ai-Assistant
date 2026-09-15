@@ -14,6 +14,7 @@ else:
 import time
 import random
 from pathlib import Path
+from core import user_paths
 
 try:
     import pyautogui
@@ -62,7 +63,7 @@ _SAFE_SCREENSHOT_ROOTS = (
 )
 
 def _safe_screenshot_path(requested: str | None) -> Path:
-    fallback = Path.home() / "Desktop" / "judo_screenshot.png"
+    fallback = user_paths.desktop() / "judo_screenshot.png"
     if not requested:
         return fallback
     try:

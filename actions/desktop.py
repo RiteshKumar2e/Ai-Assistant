@@ -8,6 +8,7 @@ import tempfile
 import platform
 from pathlib import Path
 from datetime import datetime
+from core import user_paths
 
 try:
     import pyautogui
@@ -33,7 +34,7 @@ def _get_desktop() -> Path:
         xdg = os.environ.get("XDG_DESKTOP_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Desktop"
+    return user_paths.desktop()
 
 def _build_sandbox() -> dict:
     import time

@@ -4,6 +4,7 @@ import json
 import re
 import time
 from pathlib import Path
+from core import user_paths
 
 
 def get_base_dir():
@@ -14,7 +15,7 @@ def get_base_dir():
 
 BASE_DIR         = get_base_dir()
 API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
-PROJECTS_DIR     = Path.home() / "Desktop" / "JudoProjects"
+PROJECTS_DIR     = user_paths.desktop() / "JudoProjects"
 MAX_FIX_ATTEMPTS = 5
 MODEL_PLANNER    = "gemini-flash-latest"
 MODEL_WRITER     = "gemini-flash-latest"

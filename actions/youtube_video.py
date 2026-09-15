@@ -34,6 +34,7 @@ except ImportError:
     _TRANSCRIPT_OK = False
 
 from config import get_os, is_windows, is_mac, is_linux
+from core import user_paths
 
 
 def _get_base_dir() -> Path:
@@ -192,7 +193,7 @@ def _summarize_with_gemini(transcript: str, video_url: str) -> str:
 def _save_summary(content: str, video_url: str) -> str:
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"youtube_summary_{ts}.txt"
-    desktop  = Path.home() / "Desktop"
+    desktop  = user_paths.desktop()
     desktop.mkdir(parents=True, exist_ok=True)
     filepath = desktop / filename
 
