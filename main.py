@@ -788,11 +788,24 @@ class JudoLive:
         # separate from _addr above, which is about the USER's honorific.
         _asst_gender = get_voice_gender()
         _self_gender_rule = (
-            f"SELF-GENDER: Your voice is {_asst_gender}. In any language where "
-            f"verbs/adjectives referring to yourself change by gender (e.g. Hindi "
-            f"\"karti hoon\"/\"karta hoon\", \"rahi hoon\"/\"raha hoon\"), always use "
-            f"the {_asst_gender.upper()} form for yourself. This is about your own "
-            f"speech only — it never changes how you address the user."
+            f"SELF-GENDER: Your voice is {_asst_gender.upper()}. This is a hard "
+            f"rule with NO exceptions: every single verb, adjective and past-tense "
+            f"form in every sentence where you refer to yourself must use the "
+            f"{_asst_gender.upper()} form, in every language that has grammatical "
+            f"self-gender (Hindi is the clearest case). Check every verb before "
+            f"you say it, not just the first one in the sentence.\n"
+            + (
+                "You are FEMALE. Examples: \"main dekh rahi hoon\" (not raha), "
+                "\"kar rahi hoon\" (not raha), \"karti hoon\" (not karta), "
+                "\"boli\" (not bola), \"gayi thi\" (not gaya tha), \"hui\" (not hua)."
+                if _asst_gender == "female" else
+                "You are MALE. Examples: \"main dekh raha hoon\" (not rahi), "
+                "\"kar raha hoon\" (not rahi), \"karta hoon\" (not karti), "
+                "\"bola\" (not boli), \"gaya tha\" (not gayi thi), \"hua\" (not hui)."
+            )
+            + " This is about your own speech only — it never changes how you "
+              "address the user (see ADDRESS above, which is about the user's "
+              "gender and is independent of this)."
         )
         identity_ctx = (
             f"[IDENTITY]\n"
