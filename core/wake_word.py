@@ -50,6 +50,24 @@ def is_installed() -> bool:
         return False
 
 
+def models_dir() -> Path | None:
+    """Where openwakeword looks for .onnx model files, or None if not installed."""
+    if not is_installed():
+        return None
+    try:
+        import openwakeword
+        return Path(openwakeword.__file__).resolve().parent / "resources" / "models"
+    except Exception:
+        return None
+
+
+def _has_model(name: str) -> bool:
+    d = models_dir()
+    if not d or not d.is_dir():
+        return False
+    return any(d.glob(f"{name}*.onnx")) or any(d.glob(f"{name}*.tflite"))
+
+
 def is_ready() -> bool:
     """True if openwakeword is installed AND its model files are present on disk.
 
@@ -58,29 +76,18 @@ def is_ready() -> bool:
     with the detector's own Model when it's already running, which intermittently
     returned False and made the UI flicker to 'not downloaded'. Never raises.
     """
-    if not is_installed():
-        return False
-    try:
-        import openwakeword
-        models_dir = Path(openwakeword.__file__).resolve().parent / "resources" / "models"
-        if not models_dir.is_dir():
-            return False
-        has_wake = (any(models_dir.glob(f"{WAKE_MODEL}*.onnx"))
-                    or any(models_dir.glob(f"{WAKE_MODEL}*.tflite")))
-        has_mel = (any(models_dir.glob("melspectrogram*.onnx"))
-                   or any(models_dir.glob("melspectrogram*.tflite")))
-        has_emb = (any(models_dir.glob("embedding_model*.onnx"))
-                   or any(models_dir.glob("embedding_model*.tflite")))
-        return bool(has_wake and has_mel and has_emb)
-    except Exception:
-        return False
+    return _has_model(WAKE_MODEL) and _has_model("melspectrogram") and _has_model("embedding_model")
 
 
 def install_and_download(logger: Callable[[str], None] = print) -> tuple[bool, str]:
     """
     One-click setup for the UI button: pip-install openwakeword if missing, then
-    download the wake model. Returns (ok, message). Never raises — every failure
-    is reported through the returned message and the logger.
+    download the SHARED feature-extractor models (melspectrogram + embedding —
+    every wake phrase needs these, pretrained or custom). WAKE_MODEL itself
+    ("hey_judo") is not one of openwakeword's pretrained phrases, so it is never
+    fetched here — see the module docstring for how to get a real one.
+    Returns (ok, message). Never raises — every failure is reported through the
+    returned message and the logger.
     """
     try:
         if not is_installed():
@@ -92,19 +99,22 @@ def install_and_download(logger: Callable[[str], None] = print) -> tuple[bool, s
             if r.returncode != 0:
                 tail = (r.stderr or r.stdout or "").strip().splitlines()[-1:] or [""]
                 return False, f"pip install failed: {tail[0][:160]}"
-        # Download the pretrained melspectrogram/embedding + wake models.
-        logger("Wake word: downloading models…")
+
+        logger("Wake word: downloading shared feature-extractor models…")
         try:
             import openwakeword.utils as _u
-            try:
-                _u.download_models([WAKE_MODEL])
-            except TypeError:
-                _u.download_models()   # older signature downloads the default set
+            _u.download_models()   # mel + embedding models, not phrase-specific
         except Exception as e:
             return False, f"model download failed: {e}"
 
-        if not is_ready():
-            return False, "installed, but the wake model could not be loaded."
+        if not _has_model("melspectrogram") or not _has_model("embedding_model"):
+            return False, "installed, but the shared feature-extractor models could not be loaded."
+        if not _has_model(WAKE_MODEL):
+            d = models_dir()
+            return False, (
+                f"Shared models ready. No '{WAKE_MODEL}' model yet — train a custom "
+                f"one (see the module docstring) and drop it into {d} to finish setup."
+            )
         logger("Wake word: ready.")
         return True, "Wake word installed and ready."
     except Exception as e:
