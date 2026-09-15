@@ -1,6 +1,6 @@
 """
 unit_converter.py — Converts a number between length, weight, temperature or
-currency units, so JAADU never has to guess (LLMs are unreliable at arithmetic
+currency units, so JUDO never has to guess (LLMs are unreliable at arithmetic
 and currency rates go stale the moment they're baked into training data).
 
 Currency uses a free, keyless exchange-rate API (open.er-api.com) — no signup,

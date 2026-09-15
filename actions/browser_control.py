@@ -107,7 +107,7 @@ def _real_profile_dir(browser: str) -> str:
             print(f"[Browser] ✅ Real profile found for {browser}: {p}")
             return str(p)
 
-    fallback = home / ".jaadu_profiles" / browser
+    fallback = home / ".judo_profiles" / browser
     fallback.mkdir(parents=True, exist_ok=True)
     print(f"[Browser] ⚠️  Real profile not found for {browser}, using: {fallback}")
     return str(fallback)
@@ -475,7 +475,7 @@ class _BrowserSession:
         # Playwright is left holding a context whose underlying browser is
         # already gone). Once that happens there is no point retrying the real
         # profile again for this session — every subsequent launch goes
-        # straight to the isolated JAADU automation profile instead.
+        # straight to the isolated JUDO automation profile instead.
         self._real_profile_failed = False
 
     def start(self):
@@ -552,7 +552,7 @@ class _BrowserSession:
 
         if engine_name == "firefox":
             profile = _firefox_profile_dir() or str(
-                Path.home() / ".jaadu_profiles" / "firefox"
+                Path.home() / ".judo_profiles" / "firefox"
             )
             kwargs: dict = {
                 "headless":    False,
@@ -566,17 +566,17 @@ class _BrowserSession:
             try:
                 self._context = await engine_obj.launch_persistent_context(profile, **kwargs)
             except Exception as e:
-                print(f"[Browser] Firefox real profile failed ({e}), using JAADU profile")
-                jaadu = str(Path.home() / ".jaadu_profiles" / "firefox_jaadu")
-                Path(jaadu).mkdir(parents=True, exist_ok=True)
-                self._context = await engine_obj.launch_persistent_context(jaadu, **kwargs)
+                print(f"[Browser] Firefox real profile failed ({e}), using JUDO profile")
+                judo = str(Path.home() / ".judo_profiles" / "firefox_judo")
+                Path(judo).mkdir(parents=True, exist_ok=True)
+                self._context = await engine_obj.launch_persistent_context(judo, **kwargs)
 
             self._page = await self._adopt_page()
             print(f"[Browser] ✅ Firefox launched")
             return
 
         if engine_name == "webkit":
-            safari_profile = str(Path.home() / ".jaadu_profiles" / "safari")
+            safari_profile = str(Path.home() / ".judo_profiles" / "safari")
             Path(safari_profile).mkdir(parents=True, exist_ok=True)
             kwargs = {
                 "headless":    False,
@@ -634,22 +634,22 @@ class _BrowserSession:
             except Exception as e:
                 print(f"[Browser] ⚠️  Real profile unusable for {label} ({e}) — "
                       f"probably already open under your own account. Switching "
-                      f"to JAADU's own automation profile for this session.")
+                      f"to JUDO's own automation profile for this session.")
                 self._real_profile_failed = True
                 await self._discard_dead_context()
 
         # Real profile is unavailable or proven dead this session — use a
-        # persistent JAADU automation profile instead. It has no conflict with
+        # persistent JUDO automation profile instead. It has no conflict with
         # a normally-running browser, and accounts logged in here once stay
         # logged in on later sessions too.
-        jaadu_profile = str(Path.home() / ".jaadu_profiles" / self.browser_name)
-        Path(jaadu_profile).mkdir(parents=True, exist_ok=True)
-        print(f"[Browser] Using JAADU profile: {jaadu_profile}")
+        judo_profile = str(Path.home() / ".judo_profiles" / self.browser_name)
+        Path(judo_profile).mkdir(parents=True, exist_ok=True)
+        print(f"[Browser] Using JUDO profile: {judo_profile}")
 
         try:
-            self._context = await engine_obj.launch_persistent_context(jaadu_profile, **kwargs)
+            self._context = await engine_obj.launch_persistent_context(judo_profile, **kwargs)
             self._page = await self._adopt_page()
-            print(f"[Browser] ✅ Launched [{label}] with JAADU profile "
+            print(f"[Browser] ✅ Launched [{label}] with JUDO profile "
                   f"(sign-ins persist across sessions)")
         except Exception as e2:
             raise RuntimeError(f"Could not launch {self.browser_name}: {e2}") from e2
@@ -680,7 +680,7 @@ class _BrowserSession:
             if not _looks_like_dead_context(e):
                 raise
             print(f"[Browser] {self.browser_name} session died underneath us "
-                  f"({e}) — relaunching on JAADU's own profile.")
+                  f"({e}) — relaunching on JUDO's own profile.")
             self._real_profile_failed = True
             await self._discard_dead_context()
             await self._launch()
@@ -861,7 +861,7 @@ class _BrowserSession:
     async def screenshot(self, path: str = None) -> str:
         page = await self._get_page()
         try:
-            save_path = path or str(Path.home() / "Desktop" / "jaadu_screenshot.png")
+            save_path = path or str(Path.home() / "Desktop" / "judo_screenshot.png")
             await page.screenshot(path=save_path, full_page=False)
             return f"Screenshot saved: {save_path}"
         except Exception as e:

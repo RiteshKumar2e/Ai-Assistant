@@ -52,8 +52,8 @@ def is_configured() -> bool:
 
 
 def get_assistant_name() -> str:
-    """Return the configured assistant name, or 'JAADU' if not set."""
-    return load_api_keys().get("assistant_name", "JAADU") or "JAADU"
+    """Return the configured assistant name, or 'JUDO' if not set."""
+    return load_api_keys().get("assistant_name", "JUDO") or "JUDO"
 
 
 def get_user_name() -> str:
@@ -70,7 +70,7 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except Exception:
             data = {}
-    data["assistant_name"] = assistant_name.strip() or "JAADU"
+    data["assistant_name"] = assistant_name.strip() or "JUDO"
     data["user_name"] = user_name.strip()
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
@@ -105,7 +105,7 @@ def save_voice(voice_name: str) -> None:
 
 
 def get_wake_word_enabled() -> bool:
-    """Whether local wake-word gating is on (assistant sleeps until 'Hey Jaadu')."""
+    """Whether local wake-word gating is on (assistant sleeps until 'Hey Judo')."""
     return load_api_keys().get("wake_word_enabled", False)
 
 

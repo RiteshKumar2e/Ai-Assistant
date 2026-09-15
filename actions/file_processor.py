@@ -1,5 +1,5 @@
 """
-file_processor.py — JAADU Universal File Processor
+file_processor.py — JUDO Universal File Processor
 
 Supported types:
   image   → describe, ocr, resize, convert, compress, crop

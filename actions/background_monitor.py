@@ -1,6 +1,6 @@
 """
 BackgroundMonitor — user-configured topic watching.
-Checks DDG news once per day per topic; alerts JAADU when a new headline appears.
+Checks DDG news once per day per topic; alerts JUDO when a new headline appears.
 No crypto, no finance, no uninvited tracking.
 """
 import hashlib

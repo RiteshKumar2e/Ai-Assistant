@@ -378,7 +378,7 @@ class _SysMetrics:
 _metrics = _SysMetrics()
 
 class HudCanvas(QWidget):
-    def __init__(self, face_path: str, assistant_name: str = "JAADU", parent=None):
+    def __init__(self, face_path: str, assistant_name: str = "JUDO", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setMinimumSize(300, 300)
@@ -717,7 +717,7 @@ class HudCanvas(QWidget):
         p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
 
         # waveform — reacts to the real audio level (mic while listening,
-        # JAADU's own voice while speaking). Falls back to a gentle idle
+        # JUDO's own voice while speaking). Falls back to a gentle idle
         # ripple when there's no sound. _amp_disp is the smoothed 0–1 level.
         wy = sy + 30
         N, bw = 36, 8
@@ -837,7 +837,7 @@ class LogWidget(QTextEdit):
         self._text    = ""
         self._pos     = 0
         self._tag     = "sys"
-        self._ai_name_lc = "jaadu"   # updated when assistant name changes
+        self._ai_name_lc = "judo"   # updated when assistant name changes
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
         self._sig.connect(self._enqueue)
@@ -860,7 +860,7 @@ class LogWidget(QTextEdit):
         tl = self._text.lower()
         _ai_pfx = f"{self._ai_name_lc}:"
         if   tl.startswith("you:"):                              self._tag = "you"
-        elif tl.startswith(_ai_pfx) or tl.startswith("jaadu:"): self._tag = "ai"
+        elif tl.startswith(_ai_pfx) or tl.startswith("judo:"): self._tag = "ai"
         elif tl.startswith("file:"):                             self._tag = "file"
         elif "err" in tl:                                        self._tag = "err"
         else:                                                    self._tag = "sys"
@@ -992,7 +992,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for JAADU", str(Path.home()),
+            self, "Select a file for JUDO", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -1414,7 +1414,7 @@ class CustomizeOverlay(QWidget):
     saved = pyqtSignal(str, str, str, str)   # assistant_name, user_name, ui_color, voice
     _OW, _OH = 400, 588
 
-    def __init__(self, assistant_name="JAADU", user_name="",
+    def __init__(self, assistant_name="JUDO", user_name="",
                  ui_color=DEFAULT_UI_COLOR, voice="", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1620,7 +1620,7 @@ class CustomizeOverlay(QWidget):
         self.hide()
 
     def _save(self):
-        name = self._name_input.text().strip() or "JAADU"
+        name = self._name_input.text().strip() or "JUDO"
         user = self._user_input.text().strip()
         self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice)
         self.hide()
@@ -1840,11 +1840,11 @@ class ConfirmBanner(_HudOverlay):
 
 
 class AudioDeviceOverlay(_HudOverlay):
-    """Choose which microphone JAADU listens to and which speakers it uses.
+    """Choose which microphone JUDO listens to and which speakers it uses.
 
     Both audio streams used to open with no `device=` at all, so they always
     took the OS default — which on Windows moves by itself the moment a headset
-    is plugged in. 'JAADU can't hear me' is usually 'JAADU is listening to the
+    is plugged in. 'JUDO can't hear me' is usually 'JUDO is listening to the
     webcam'."""
 
     picked = pyqtSignal()      # emitted after Apply, when something changed
@@ -1912,10 +1912,10 @@ class AudioDeviceOverlay(_HudOverlay):
             lay.addWidget(box)
             return box
 
-        self._in_box  = _row("MICROPHONE — what JAADU hears you with",
+        self._in_box  = _row("MICROPHONE — what JUDO hears you with",
                              "input", get_input_device())
         lay.addSpacing(4)
-        self._out_box = _row("SPEAKERS — what JAADU talks through",
+        self._out_box = _row("SPEAKERS — what JUDO talks through",
                              "output", get_output_device())
 
         note = QLabel("Applying reconnects the session. Your conversation is kept.")
@@ -1969,7 +1969,7 @@ class AudioDeviceOverlay(_HudOverlay):
 
 
 class MemoryOverlay(_HudOverlay):
-    """Everything JAADU has stored about you, and when it learned it.
+    """Everything JUDO has stored about you, and when it learned it.
 
     Memory used to be a 2200-character store that deleted its oldest entries
     when full and mentioned it only on stdout. The cap is gone; this panel is
@@ -2063,7 +2063,7 @@ class MemoryOverlay(_HudOverlay):
 
         from memory.memory_manager import all_entries_for_ui
 
-        hdr = QLabel("🧠  WHAT JAADU REMEMBERS")
+        hdr = QLabel("🧠  WHAT JUDO REMEMBERS")
         hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         self._lay.addWidget(hdr)
@@ -2165,7 +2165,7 @@ class MemoryOverlay(_HudOverlay):
 
 
 class ClipboardPanel(QWidget):
-    """Floating panel shown when text is copied — offers quick Jaadu actions."""
+    """Floating panel shown when text is copied — offers quick Judo actions."""
 
     action_requested = pyqtSignal(str)
     _W, _H = 326, 112
@@ -2697,7 +2697,7 @@ class RemoteKeyOverlay(QWidget):
         self._qr_label.setStyleSheet(
             "color: #00ff88; background: #001a0d; border-radius: 10px;"
         )
-        self._timer_lbl.setText("Phone connected — JAADU ready")
+        self._timer_lbl.setText("Phone connected — JUDO ready")
         self._timer_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
 
     def _refresh_key(self):
@@ -2753,7 +2753,7 @@ class MainWindow(QMainWindow):
 
         # Load customization from config
         _cfg = _read_full_config()
-        self._assistant_name: str = (_cfg.get("assistant_name") or "JAADU").strip()
+        self._assistant_name: str = (_cfg.get("assistant_name") or "JUDO").strip()
         _display = self._assistant_name.upper()
 
         # Apply the saved UI colour BEFORE panels/stylesheets are built
@@ -2773,13 +2773,13 @@ class MainWindow(QMainWindow):
 
         self.on_text_command   = None
         self.on_remote_clicked = None   # callable: () -> (url, key) | None
-        self.on_interrupt      = None   # callable: () -> None — stop JAADU mid-speech
+        self.on_interrupt      = None   # callable: () -> None — stop JUDO mid-speech
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
-        self.get_plugins       = None   # callable: () -> list[dict], set by JaaduLive
-        self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JaaduLive
-        self.on_wake_toggle    = None   # callable: (enable: bool) -> str, set by JaaduLive
+        self.get_plugins       = None   # callable: () -> list[dict], set by JudoLive
+        self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JudoLive
+        self.on_wake_toggle    = None   # callable: (enable: bool) -> str, set by JudoLive
         self.on_wake_manual    = None   # callable: () -> None — manual sleep/wake
         self.wake_get_state    = None   # callable: () -> dict {enabled, awake, ready}
         self._muted            = False
@@ -2999,9 +2999,9 @@ class MainWindow(QMainWindow):
     # Icon generation — arc-reactor style, rendered with Pillow
     # ------------------------------------------------------------------
     @staticmethod
-    def _build_jaadu_icon(out_path: Path) -> bool:
+    def _build_judo_icon(out_path: Path) -> bool:
         """
-        Render a JAADU arc-reactor icon at 4× resolution and downsample
+        Render a JUDO arc-reactor icon at 4× resolution and downsample
         for crisp results at all sizes. Saves a multi-res .ico to out_path.
         Returns True on success.
         """
@@ -3241,9 +3241,9 @@ class MainWindow(QMainWindow):
         desktop = self._get_desktop_dir()
 
         # Arc-reactor icon (.ico — also exported as .png for Linux/macOS)
-        ico_path = Path(__file__).resolve().parent / "config" / "jaadu.ico"
+        ico_path = Path(__file__).resolve().parent / "config" / "judo.ico"
         if not ico_path.exists():
-            self._build_jaadu_icon(ico_path)
+            self._build_judo_icon(ico_path)
 
         try:
             _os = platform.system()
@@ -3267,7 +3267,7 @@ class MainWindow(QMainWindow):
 
                 # Launcher executable (bash — runs as background process,
                 # macOS does NOT open Terminal for executables inside .app bundles)
-                launcher = mac_dir / "Jaadu"
+                launcher = mac_dir / "Judo"
                 launcher.write_text(
                     "#!/usr/bin/env bash\n"
                     f'cd "{script.parent}"\n'
@@ -3282,9 +3282,9 @@ class MainWindow(QMainWindow):
                     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
                     '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
                     '<plist version="1.0"><dict>\n'
-                    '  <key>CFBundleExecutable</key><string>Jaadu</string>\n'
+                    '  <key>CFBundleExecutable</key><string>Judo</string>\n'
                     '  <key>CFBundleIdentifier</key>'
-                    '<string>com.jaadu.assistant</string>\n'
+                    '<string>com.judo.assistant</string>\n'
                     '  <key>CFBundleName</key><string>J.A.R.V.I.S</string>\n'
                     '  <key>CFBundlePackageType</key><string>APPL</string>\n'
                     '  <key>CFBundleVersion</key><string>1.0</string>\n'
@@ -4016,7 +4016,7 @@ class MainWindow(QMainWindow):
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                     r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
                 try:
-                    winreg.QueryValueEx(key, "JAADU_AI")
+                    winreg.QueryValueEx(key, "JUDO_AI")
                     return True
                 except FileNotFoundError:
                     return False
@@ -4024,9 +4024,9 @@ class MainWindow(QMainWindow):
                     winreg.CloseKey(key)
             elif _OS == "Darwin":
                 return (Path.home() / "Library" / "LaunchAgents"
-                        / "com.jaadu.assistant.plist").exists()
+                        / "com.judo.assistant.plist").exists()
             else:
-                return (Path.home() / ".config" / "autostart" / "jaadu.desktop").exists()
+                return (Path.home() / ".config" / "autostart" / "judo.desktop").exists()
         except Exception:
             return False
 
@@ -4039,17 +4039,17 @@ class MainWindow(QMainWindow):
                 reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                     r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_ALL_ACCESS)
                 if currently_on:
-                    winreg.DeleteValue(reg, "JAADU_AI")
+                    winreg.DeleteValue(reg, "JUDO_AI")
                 else:
                     pythonw = Path(sys.executable).parent / "pythonw.exe"
                     exe = str(pythonw if pythonw.exists() else sys.executable)
-                    winreg.SetValueEx(reg, "JAADU_AI", 0, winreg.REG_SZ,
+                    winreg.SetValueEx(reg, "JUDO_AI", 0, winreg.REG_SZ,
                                       f'"{exe}" "{script}"')
                 winreg.CloseKey(reg)
             elif _OS == "Darwin":
                 plist_dir = Path.home() / "Library" / "LaunchAgents"
                 plist_dir.mkdir(parents=True, exist_ok=True)
-                plist = plist_dir / "com.jaadu.assistant.plist"
+                plist = plist_dir / "com.judo.assistant.plist"
                 if currently_on:
                     plist.unlink(missing_ok=True)
                 else:
@@ -4058,7 +4058,7 @@ class MainWindow(QMainWindow):
                         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
                         '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
                         '<plist version="1.0"><dict>\n'
-                        '  <key>Label</key><string>com.jaadu.assistant</string>\n'
+                        '  <key>Label</key><string>com.judo.assistant</string>\n'
                         '  <key>ProgramArguments</key><array>\n'
                         f'    <string>{sys.executable}</string>\n'
                         f'    <string>{script}</string>\n'
@@ -4069,7 +4069,7 @@ class MainWindow(QMainWindow):
             else:
                 desk_dir = Path.home() / ".config" / "autostart"
                 desk_dir.mkdir(parents=True, exist_ok=True)
-                desk = desk_dir / "jaadu.desktop"
+                desk = desk_dir / "judo.desktop"
                 if currently_on:
                     desk.unlink(missing_ok=True)
                 else:
@@ -4129,7 +4129,7 @@ class MainWindow(QMainWindow):
                         "awake": bool(s.get("awake"))}
             except Exception:
                 pass
-        # Before JaaduLive has wired its callback (drawer built at startup).
+        # Before JudoLive has wired its callback (drawer built at startup).
         ready, enabled = False, False
         try:
             from core.wake_word import is_ready
@@ -4190,7 +4190,7 @@ class MainWindow(QMainWindow):
                 self._wake_dl_sig.emit(ok, msg)
             threading.Thread(target=_work, daemon=True).start()
             return
-        # Already downloaded → just flip enabled/disabled through JaaduLive.
+        # Already downloaded → just flip enabled/disabled through JudoLive.
         if self.on_wake_toggle:
             try:
                 self.on_wake_toggle(not st["enabled"])
@@ -4242,7 +4242,7 @@ class MainWindow(QMainWindow):
             self._customize_overlay.hide()
         cw = self.centralWidget()
         ov = CustomizeOverlay(
-            cfg.get("assistant_name", "JAADU") or "JAADU",
+            cfg.get("assistant_name", "JUDO") or "JUDO",
             cfg.get("user_name", ""),
             cfg.get("ui_color", "") or DEFAULT_UI_COLOR,
             cfg.get("voice_name", ""),
@@ -4269,7 +4269,7 @@ class MainWindow(QMainWindow):
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = "",
                            voice: str = ""):
         """Update all name/theme-dependent UI elements and persist to config."""
-        self._assistant_name = name.strip() or "JAADU"
+        self._assistant_name = name.strip() or "JUDO"
         display = self._assistant_name.upper()
         self.setWindowTitle(f"{display} — {APP_VERSION}")
         self._title_lbl.setText(display)
@@ -4518,7 +4518,7 @@ class MainWindow(QMainWindow):
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._assistant_name = _read_full_config().get("assistant_name", "JAADU") or "JAADU"
+        self._assistant_name = _read_full_config().get("assistant_name", "JUDO") or "JUDO"
         self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
 
 
@@ -4531,7 +4531,7 @@ class _RootShim:
         pass
 
 
-class JaaduUI:
+class JudoUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
