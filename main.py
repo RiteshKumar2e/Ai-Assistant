@@ -72,7 +72,7 @@ from actions.background_monitor import (
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
     get_brief_enabled, get_voice, get_wake_word_enabled, save_wake_word_enabled,    get_input_device, get_output_device,
-    get_user_gender,
+    get_user_gender, get_gemini_api_keys,
 )
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
@@ -125,6 +125,12 @@ def _pcm_level(samples) -> float:
 
 
 def _get_api_key() -> str:
+    """First configured key — used by one-off calls (session summaries) that
+    don't need rotation. The live connection loop uses
+    JudoLive._current_api_key() / _rotate_api_key() instead."""
+    keys = get_gemini_api_keys()
+    if keys:
+        return keys[0]
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
 
@@ -379,6 +385,14 @@ class JudoLive:
         # Rolling pitch estimate used ONLY as the ADDRESS fallback when no name
         # is known yet and no manual override is set — see _build_config.
         self._gender_estimator    = GenderEstimator()
+
+        # ── Multi-key rotation ──────────────────────────────────────────────
+        # Several Gemini keys can be configured (memory.config_manager
+        # .get_gemini_api_keys) so one project running out of free-tier quota
+        # doesn't take the assistant down — the connect loop rotates to the
+        # next key on a quota/rate-limit error instead of just backing off.
+        self._key_index         = 0   # index into get_gemini_api_keys()
+        self._quota_rotate_count = 0   # consecutive quota-triggered rotations since the last successful connect
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
 
@@ -588,6 +602,22 @@ class JudoLive:
         Unlike the voice, this costs nothing to keep context for — it only
         changes one line of the system prompt, so the conversation is kept."""
         self.request_reconnect(keep_context=True, reason="address preference")
+
+    def _current_api_key(self) -> str:
+        """The key the next connection attempt should use."""
+        keys = get_gemini_api_keys()
+        if not keys:
+            raise RuntimeError("No Gemini API key configured.")
+        return keys[self._key_index % len(keys)]
+
+    def _rotate_api_key(self) -> tuple[int, int]:
+        """Advance to the next configured key (wraps around). Returns
+        (new_key_number, total_keys) — 1-indexed for logging, never the key
+        itself."""
+        keys = get_gemini_api_keys()
+        n = max(1, len(keys))
+        self._key_index = (self._key_index + 1) % n
+        return self._key_index + 1, n
 
     def _on_audio_device_change(self):
         """Microphone or speaker changed. Both streams are opened inside the
@@ -1274,7 +1304,11 @@ class JudoLive:
             e = identity.get(k, {})
             return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
 
-        lang = _val("language")
+        # No stored preference yet (very first briefing) → default to Hindi
+        # rather than drifting into English by omission. Once the user speaks
+        # in any language, identity.language gets set and THAT wins from then
+        # on — this only picks the starting point before anyone has said a word.
+        lang = _val("language") or "Hindi"
         name = _val("name")
         time_str = datetime.now().strftime("%H:%M")
 
@@ -1456,7 +1490,7 @@ class JudoLive:
                         alerts = await asyncio.to_thread(monitor_check_all)
                         memory = load_memory()
                         lang_e = memory.get("identity", {}).get("language", {})
-                        lang   = (lang_e.get("value", "") if isinstance(lang_e, dict) else str(lang_e)).strip() or "English"
+                        lang   = (lang_e.get("value", "") if isinstance(lang_e, dict) else str(lang_e)).strip() or "Hindi"
                         for alert in alerts:
                             msg = (
                                 f"{alert}\n\n"
@@ -1621,7 +1655,7 @@ class JudoLive:
                 # v1alpha carries proactive audio; if it gets rejected we fall
                 # back to v1beta.
                 client = genai.Client(
-                    api_key=_get_api_key(),
+                    api_key=self._current_api_key(),
                     http_options={"api_version": "v1alpha" if self._enhanced_live else "v1beta"}
                 )
 
@@ -1643,6 +1677,7 @@ class JudoLive:
                     self._interrupted          = False
 
                     print("[JUDO] Connected.")
+                    self._quota_rotate_count = 0   # this key is working — reset the rotation guard
                     if _resumed_with:
                         # Say it plainly: the difference between "it reconnected"
                         # and "it reconnected and still knows what we were doing"
@@ -1727,6 +1762,39 @@ class JudoLive:
                 print(f"[JUDO] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 
+                # Quota / rate-limit hit on the current key — rotate to the next
+                # configured key and reconnect immediately instead of just
+                # backing off on a key that will still be exhausted later.
+                is_quota_err = any(k in err_str for k in (
+                    "RESOURCE_EXHAUSTED", "429", "quota", "Quota",
+                    "rate limit", "RATE_LIMIT",
+                ))
+                if is_quota_err:
+                    keys = get_gemini_api_keys()
+                    total = max(1, len(keys))
+                    old_num = self._key_index + 1
+                    if total > 1 and self._quota_rotate_count < total:
+                        self._quota_rotate_count += 1
+                        new_num, _ = self._rotate_api_key()
+                        self.ui.write_log(
+                            f"SYS: Key {old_num}/{total} hit its quota — "
+                            f"switching to key {new_num}/{total}."
+                        )
+                        self._conn_backoff = 0
+                        continue
+                    # Either only one key exists, or every key has already
+                    # been tried in this cycle without a successful connect —
+                    # all are exhausted right now. Stop hammering them and
+                    # back off instead of busy-looping.
+                    self._quota_rotate_count = 0
+                    self._conn_backoff = min(getattr(self, "_conn_backoff", 15) * 2, 120)
+                    msg = (f"All {total} Gemini keys are rate-limited right now"
+                           if total > 1 else "Gemini quota hit")
+                    self.ui.write_log(
+                        f"SYS: {msg} — retrying in {self._conn_backoff}s."
+                        + ("" if total > 1 else " Add more keys in Settings to avoid this.")
+                    )
+
                 # Proactive audio rejected by the server (preview API drift) —
                 # drop it and reconnect with the plain config.
                 if self._enhanced_live and (
@@ -1764,7 +1832,9 @@ class JudoLive:
                         f"NET: Connection failed — retrying in {_conn_backoff}s. "
                         "(a VPN may be required)"
                     )
-                else:
+                elif not is_quota_err:
+                    # Quota errors already set their own backoff above — don't
+                    # stomp it back down to the generic 3s here.
                     self._conn_backoff = 3
             finally:
                 self.session = None

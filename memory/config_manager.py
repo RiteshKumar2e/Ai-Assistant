@@ -51,6 +51,41 @@ def is_configured() -> bool:
     return bool(key and len(key) > 15)
 
 
+def get_gemini_api_keys() -> list[str]:
+    """All configured Gemini keys, in rotation order.
+
+    Reads the plural `gemini_api_keys` list if present (multi-key setups, so
+    one project's quota running out doesn't take the assistant down); falls
+    back to the single legacy `gemini_api_key` field so older configs with
+    just one key keep working unchanged."""
+    data = load_api_keys()
+    keys = data.get("gemini_api_keys")
+    if isinstance(keys, list):
+        cleaned = [k.strip() for k in keys if isinstance(k, str) and k.strip()]
+        if cleaned:
+            return cleaned
+    single = (data.get("gemini_api_key") or "").strip()
+    return [single] if single else []
+
+
+def save_gemini_api_keys(keys: list[str]) -> None:
+    """Persist the full key list. The first key is also mirrored into the
+    legacy `gemini_api_key` field so any code (or older build) that still
+    reads only that field keeps working."""
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    cleaned = [k.strip() for k in keys if isinstance(k, str) and k.strip()]
+    data["gemini_api_keys"] = cleaned
+    if cleaned:
+        data["gemini_api_key"] = cleaned[0]
+    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
 def get_assistant_name() -> str:
     """Return the configured assistant name, or 'JUDO' if not set."""
     return load_api_keys().get("assistant_name", "JUDO") or "JUDO"
