@@ -72,11 +72,13 @@ from actions.background_monitor import (
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
     get_brief_enabled, get_voice, get_wake_word_enabled, save_wake_word_enabled,    get_input_device, get_output_device,
+    get_user_gender,
 )
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
 from core                      import confirm as confirm_gate
 from core                      import audio_devices
+from core.voice_gender          import GenderEstimator
 from core.action_loader        import discover_actions
 from core.wake_word            import (
     WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,
@@ -373,6 +375,10 @@ class JudoLive:
         self.ui.on_interrupt      = self.interrupt
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
         self.ui.on_audio_device_change = self._on_audio_device_change
+        self.ui.on_gender_change  = self._on_gender_change    # address preference → rebuild session
+        # Rolling pitch estimate used ONLY as the ADDRESS fallback when no name
+        # is known yet and no manual override is set — see _build_config.
+        self._gender_estimator    = GenderEstimator()
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
 
@@ -576,6 +582,13 @@ class JudoLive:
         voice is a deliberate, rare act; losing it on a dropped packet was not."""
         self.request_reconnect(keep_context=False, reason="new voice")
 
+    def _on_gender_change(self):
+        """ADDRESS preference (Auto/Sir/Mam) applied from Settings.
+
+        Unlike the voice, this costs nothing to keep context for — it only
+        changes one line of the system prompt, so the conversation is kept."""
+        self.request_reconnect(keep_context=True, reason="address preference")
+
     def _on_audio_device_change(self):
         """Microphone or speaker changed. Both streams are opened inside the
         session TaskGroup, so they can only be re-opened by rebuilding it —
@@ -705,9 +718,33 @@ class JudoLive:
         )
 
         # Identity injection — overrides any hardcoded name in prompt.txt
-        _addr = (f"ADDRESS: Always call the user '{_user_name}'."
-                 if _user_name
-                 else "ADDRESS: Address the user with the ordinary respectful form "
+        #
+        # No name known yet → fall back to a gender-appropriate honorific.
+        # Priority: a manual Settings override always wins over the guess (it
+        # can never be wrong); otherwise the rolling voice-pitch estimate from
+        # core.voice_gender is used once it has heard enough of the current
+        # speaker. Neither hardcodes English — the instruction tells the model
+        # WHICH form to use and lets it pick the everyday equivalent in
+        # whatever language it is currently speaking, same as before.
+        _gender = get_user_gender() or (self._gender_estimator.gender() or "")
+        if _user_name:
+            _addr = f"ADDRESS: Always call the user '{_user_name}'."
+        elif _gender == "female":
+            _addr = ("ADDRESS: Address the user with the ordinary respectful "
+                      "FEMININE form for a superior in the language you are "
+                      "currently speaking — \"Ma'am\" in English, its everyday "
+                      "equivalent in any other language. Never an archaic or "
+                      "aristocratic form, and never the form from a different "
+                      "language than the one you are speaking in this sentence.")
+        elif _gender == "male":
+            _addr = ("ADDRESS: Address the user with the ordinary respectful "
+                      "MASCULINE form for a superior in the language you are "
+                      "currently speaking — \"Sir\" in English, its everyday "
+                      "equivalent in any other language. Never an archaic or "
+                      "aristocratic form, and never the form from a different "
+                      "language than the one you are speaking in this sentence.")
+        else:
+            _addr = ("ADDRESS: Address the user with the ordinary respectful form "
                       "for a superior in the language you are currently speaking — "
                       "\"sir\" in English, its everyday equivalent in any other "
                       "language. Never an archaic or aristocratic form, and never "
@@ -950,6 +987,12 @@ class JudoLive:
             with self._speaking_lock:
                 judo_speaking = self._is_speaking
             if not judo_speaking and not self.ui.muted and not self._phone_active:
+                # Only real, currently-heard user speech should shape the
+                # gender guess — never JUDO's own voice or silence.
+                try:
+                    self._gender_estimator.feed(indata, SEND_SAMPLE_RATE)
+                except Exception:
+                    pass
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,

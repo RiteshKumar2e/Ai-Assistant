@@ -61,6 +61,17 @@ def get_user_name() -> str:
     return load_api_keys().get("user_name", "")
 
 
+def get_user_gender() -> str:
+    """Manual honorific override: 'male' -> Sir, 'female' -> Mam, '' -> auto-detect
+    from voice pitch. Only used as the ADDRESS fallback when no name is known."""
+    v = (load_api_keys().get("user_gender", "") or "").strip().lower()
+    return v if v in ("male", "female") else ""
+
+
+def save_user_gender(gender: str) -> None:
+    _patch_config(user_gender=(gender or "").strip().lower())
+
+
 def save_assistant_config(assistant_name: str, user_name: str) -> None:
     """Persist assistant name and user name to config."""
     ensure_config_dir()

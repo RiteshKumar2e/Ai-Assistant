@@ -1411,11 +1411,11 @@ class HueWheel(QWidget):
 class CustomizeOverlay(QWidget):
     """Floating overlay — change assistant name, user name, UI colour and voice."""
 
-    saved = pyqtSignal(str, str, str, str)   # assistant_name, user_name, ui_color, voice
-    _OW, _OH = 400, 588
+    saved = pyqtSignal(str, str, str, str, str)   # assistant_name, user_name, ui_color, voice, gender_pref
+    _OW, _OH = 400, 636
 
     def __init__(self, assistant_name="JUDO", user_name="",
-                 ui_color=DEFAULT_UI_COLOR, voice="", parent=None):
+                 ui_color=DEFAULT_UI_COLOR, voice="", gender_pref="", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
@@ -1462,6 +1462,28 @@ class CustomizeOverlay(QWidget):
         self._user_input.setFixedHeight(32)
         self._user_input.setStyleSheet(_fs)
         lay.addWidget(self._user_input)
+
+        # ── Address honorific — used only while no name above is filled in ──
+        # "Auto" guesses Sir/Mam from the speaker's voice pitch each session
+        # (a heuristic — see core/voice_gender.py); the other two pin it so
+        # the guess never has to be right.
+        lay.addSpacing(4)
+        lay.addWidget(_lbl("ADDRESS AS  (used only while 'your name' is blank)", 8,
+                            color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
+        self._sel_gender = gender_pref if gender_pref in ("male", "female") else "auto"
+        self._gender_btns: dict[str, QPushButton] = {}
+        gender_row = QHBoxLayout(); gender_row.setSpacing(4)
+        for _key, _label in (("auto", "AUTO"), ("male", "SIR"), ("female", "MAM")):
+            b = QPushButton(_label)
+            b.setCheckable(True)
+            b.setFixedHeight(28)
+            b.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, key=_key: self._on_gender_pick(key))
+            self._gender_btns[_key] = b
+            gender_row.addWidget(b)
+        lay.addLayout(gender_row)
+        self._refresh_gender_btns()
 
         # ── Assistant voice — Gemini prebuilt voices ─────────────────────────
         # Names are language-neutral proper nouns, so the row reads the same in
@@ -1581,6 +1603,27 @@ class CustomizeOverlay(QWidget):
                     QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
                 """)
 
+    # ── gender/honorific selection ───────────────────────────────────────────
+    def _on_gender_pick(self, key: str):
+        self._sel_gender = key
+        self._refresh_gender_btns()
+
+    def _refresh_gender_btns(self):
+        for key, b in self._gender_btns.items():
+            on = (key == self._sel_gender)
+            b.setChecked(on)
+            if on:
+                b.setStyleSheet(f"""
+                    QPushButton {{ background: {C.PRI_GHO}; color: {C.PRI};
+                        border: 1px solid {C.PRI}; border-radius: 3px; }}
+                """)
+            else:
+                b.setStyleSheet(f"""
+                    QPushButton {{ background: transparent; color: {C.TEXT_MED};
+                        border: 1px solid {C.BORDER}; border-radius: 3px; }}
+                    QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+                """)
+
     # ── colour flow ──────────────────────────────────────────────────────────
     def _set_color(self, hx: str, update_wheel: bool = True, preview: bool = True):
         """Updates the selected colour; hex box + wheel stay in sync, theme is live-previewed."""
@@ -1622,7 +1665,9 @@ class CustomizeOverlay(QWidget):
     def _save(self):
         name = self._name_input.text().strip() or "JUDO"
         user = self._user_input.text().strip()
-        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice)
+        gender_pref = "" if self._sel_gender == "auto" else self._sel_gender
+        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR,
+                         self._sel_voice, gender_pref)
         self.hide()
 
 
@@ -2775,6 +2820,7 @@ class MainWindow(QMainWindow):
         self.on_remote_clicked = None   # callable: () -> (url, key) | None
         self.on_interrupt      = None   # callable: () -> None — stop JUDO mid-speech
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
+        self.on_gender_change  = None   # callable: () -> None — rebuild session with new ADDRESS pref
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
         self.get_plugins       = None   # callable: () -> list[dict], set by JudoLive
@@ -4246,6 +4292,7 @@ class MainWindow(QMainWindow):
             cfg.get("user_name", ""),
             cfg.get("ui_color", "") or DEFAULT_UI_COLOR,
             cfg.get("voice_name", ""),
+            cfg.get("user_gender", ""),
             parent=cw,
         )
         ow, oh = CustomizeOverlay._OW, CustomizeOverlay._OH
@@ -4267,7 +4314,7 @@ class MainWindow(QMainWindow):
             retheme_all_widgets(old, current_palette())
 
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = "",
-                           voice: str = ""):
+                           voice: str = "", gender_pref: str = ""):
         """Update all name/theme-dependent UI elements and persist to config."""
         self._assistant_name = name.strip() or "JUDO"
         display = self._assistant_name.upper()
@@ -4297,6 +4344,16 @@ class MainWindow(QMainWindow):
                 save_voice(voice)
                 voice_changed = True
 
+        # Address-honorific preference → persist and, if changed, ask JudoLive
+        # to rebuild the session so the new ADDRESS line takes effect.
+        gender_changed = False
+        from memory.config_manager import get_user_gender, save_user_gender
+        gender_pref = gender_pref.strip().lower()
+        if gender_pref in ("male", "female", ""):
+            if gender_pref != get_user_gender():
+                save_user_gender(gender_pref)
+                gender_changed = True
+
         try:
             data = _read_full_config()
             data["assistant_name"] = self._assistant_name
@@ -4309,11 +4366,16 @@ class MainWindow(QMainWindow):
                 self._log.append_log(f"SYS: UI colour applied — {ui_color}")
             if voice_changed:
                 self._log.append_log(f"SYS: Voice set — {voice}")
+            if gender_changed:
+                self._log.append_log(
+                    f"SYS: Address set — {gender_pref.capitalize() if gender_pref else 'Auto'}")
         except Exception as e:
             self._log.append_log(f"ERR: Config save failed — {e}")
 
         if voice_changed and self.on_voice_change:
             self.on_voice_change()
+        if gender_changed and self.on_gender_change:
+            self.on_gender_change()
 
     def _centre_overlay(self, ov) -> None:
         """Place a floating overlay in the middle of the HUD and show it."""
@@ -4583,6 +4645,14 @@ class JudoUI:
     @on_voice_change.setter
     def on_voice_change(self, cb):
         self._win.on_voice_change = cb
+
+    @property
+    def on_gender_change(self):
+        return self._win.on_gender_change
+
+    @on_gender_change.setter
+    def on_gender_change(self, cb):
+        self._win.on_gender_change = cb
 
     @property
     def on_audio_device_change(self):
