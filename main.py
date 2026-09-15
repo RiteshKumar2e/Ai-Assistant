@@ -787,25 +787,23 @@ class JudoLive:
         # not default to masculine regardless of voice. This is entirely
         # separate from _addr above, which is about the USER's honorific.
         _asst_gender = get_voice_gender()
+        _gender_examples = {
+            "female": '"dekh rahi hoon" (not raha), "kar rahi hoon" (not raha), '
+                      '"karti hoon" (not karta), "boli" (not bola), '
+                      '"gayi thi" (not gaya tha), "hui" (not hua)',
+            "male":   '"dekh raha hoon" (not rahi), "kar raha hoon" (not rahi), '
+                      '"karta hoon" (not karti), "bola" (not boli), '
+                      '"gaya tha" (not gayi thi), "hua" (not hui)',
+        }
         _self_gender_rule = (
-            f"SELF-GENDER: Your voice is {_asst_gender.upper()}. This is a hard "
-            f"rule with NO exceptions: every single verb, adjective and past-tense "
-            f"form in every sentence where you refer to yourself must use the "
-            f"{_asst_gender.upper()} form, in every language that has grammatical "
-            f"self-gender (Hindi is the clearest case). Check every verb before "
-            f"you say it, not just the first one in the sentence.\n"
-            + (
-                "You are FEMALE. Examples: \"main dekh rahi hoon\" (not raha), "
-                "\"kar rahi hoon\" (not raha), \"karti hoon\" (not karta), "
-                "\"boli\" (not bola), \"gayi thi\" (not gaya tha), \"hui\" (not hua)."
-                if _asst_gender == "female" else
-                "You are MALE. Examples: \"main dekh raha hoon\" (not rahi), "
-                "\"kar raha hoon\" (not rahi), \"karta hoon\" (not karti), "
-                "\"bola\" (not boli), \"gaya tha\" (not gayi thi), \"hua\" (not hui)."
-            )
-            + " This is about your own speech only — it never changes how you "
-              "address the user (see ADDRESS above, which is about the user's "
-              "gender and is independent of this)."
+            f"SELF-GENDER: Your voice is {_asst_gender.upper()}. Hard rule, no "
+            f"exceptions: every verb, adjective and past-tense form referring to "
+            f"yourself must use the {_asst_gender.upper()} form, in every language "
+            f"with grammatical self-gender (Hindi is the clearest case) — check "
+            f"every verb in the sentence, not just the first. Examples: "
+            f"{_gender_examples[_asst_gender]}. This never changes how you address "
+            f"the user (see ADDRESS above — that is about the user's gender and is "
+            f"independent of this)."
         )
         identity_ctx = (
             f"[IDENTITY]\n"
