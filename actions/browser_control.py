@@ -727,6 +727,36 @@ class _BrowserSession:
         base = _SEARCH_ENGINES.get(engine.lower(), _SEARCH_ENGINES["google"])
         return await self.go_to(base + query.replace(" ", "+"))
 
+    async def _debug_screenshot(self, page: Page, tag: str) -> str:
+        """Best-effort screenshot taken right when an interactive action fails,
+        so a bare Playwright timeout ("waiting for locator...") turns into
+        something a human can actually diagnose (wrong page? login wall?
+        cookie banner covering the element?) instead of guessing blind."""
+        try:
+            path = str(user_paths.desktop() / f"judo_debug_{tag}.png")
+            await page.screenshot(path=path, full_page=False)
+            return f" Screenshot saved: {path}"
+        except Exception:
+            return ""
+
+    async def _describe_missing(self, page: Page, selector: str, tag: str) -> str:
+        """Distinguishes 'selector matches nothing' (wrong page / not loaded /
+        behind a login wall) from 'selector matches but isn't interactable'
+        (hidden, disabled, or covered by an overlay) — the two most common
+        causes of a hung click/type, which a plain timeout can't tell apart."""
+        try:
+            count = await page.locator(selector).count()
+        except Exception:
+            count = 0
+        shot = await self._debug_screenshot(page, tag)
+        if count == 0:
+            return (f"No element matches '{selector}' on {page.url}. The page may "
+                    f"not have finished loading, may require signing in, or the "
+                    f"selector no longer matches this page.{shot}")
+        return (f"'{selector}' exists on {page.url} but isn't interactable — "
+                f"hidden, disabled, or covered by an overlay (e.g. a cookie/login "
+                f"prompt).{shot}")
+
     async def click(self, selector: str = None, text: str = None) -> str:
         page = await self._get_page()
         try:
@@ -738,6 +768,8 @@ class _BrowserSession:
                 return f"Clicked selector: {selector}"
             return "No selector or text provided."
         except PlaywrightTimeout:
+            if selector:
+                return f"Click error: {await self._describe_missing(page, selector, 'click_timeout')}"
             return "Element not found (timeout)."
         except Exception as e:
             return f"Click error: {e}"
@@ -748,9 +780,13 @@ class _BrowserSession:
         try:
             el = page.locator(selector).first if selector else page.locator(":focus")
             if clear_first:
-                await el.clear()
-            await el.type(text, delay=50)
+                await el.clear(timeout=10_000)
+            await el.type(text, delay=50, timeout=10_000)
             return "Text typed."
+        except PlaywrightTimeout:
+            if selector:
+                return f"Type error: {await self._describe_missing(page, selector, 'type_timeout')}"
+            return "Type error: no element focused (timeout)."
         except Exception as e:
             return f"Type error: {e}"
 
@@ -819,7 +855,8 @@ class _BrowserSession:
                 return f"Clicked: '{description}'"
             except Exception:
                 pass
-        return f"Could not find element: '{description}'"
+        shot = await self._debug_screenshot(page, "smart_click_miss")
+        return f"Could not find element: '{description}' on {page.url}.{shot}"
 
     async def smart_type(self, description: str, text: str) -> str:
         page = await self._get_page()
@@ -840,7 +877,8 @@ class _BrowserSession:
                 return f"Typed into ({method}): '{description}'"
             except Exception:
                 continue
-        return f"Could not find input: '{description}'"
+        shot = await self._debug_screenshot(page, "smart_type_miss")
+        return f"Could not find input: '{description}' on {page.url}.{shot}"
 
     async def new_tab(self, url: str = "") -> str:
         page = await self._get_page()
