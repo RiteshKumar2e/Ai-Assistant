@@ -686,6 +686,16 @@ class JaaduLive:
         mem_str    = format_memory_for_prompt(memory)
         sys_prompt = _load_system_prompt()
 
+        # Whoever most recently said "I'm <name>" / "my name is <name>" wins —
+        # save_memory already overwrites identity.name on every introduction,
+        # so reading it fresh here means the assistant addresses the current
+        # speaker, not whoever set up the static config name at first launch.
+        _id_entry = memory.get("identity", {}).get("name", {})
+        _mem_name = (_id_entry.get("value", "") if isinstance(_id_entry, dict)
+                     else str(_id_entry or "")).strip()
+        if _mem_name:
+            _user_name = _mem_name
+
         now      = datetime.now()
         time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
         time_ctx = (
