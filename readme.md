@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](#-requirements)
 [![Engine](https://img.shields.io/badge/Engine-Gemini%203.1%20Flash%20Live-8E44AD)](#-whats-new-in-mark-liii)
-[![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey)](#%EF%B8%8F-license)
+[![License](https://img.shields.io/badge/License-MIT-lightgrey)](#%EF%B8%8F-license)
 
 **A real-time voice AI that can hear, see, understand, and control your computer — on any OS.**
 Built on the Gemini Live API for native audio streaming, delivering zero subscriptions and total digital autonomy.
@@ -298,8 +298,7 @@ Ai-Assistant/
 
 ## ⚠️ License
 
-Personal and non-commercial use only.
-Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)**.
+Licensed under the **[MIT License](LICENSE)**.
 
 ---
 

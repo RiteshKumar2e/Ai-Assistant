@@ -1,10 +1,18 @@
 """
-media_control.py — Universal play/pause/skip/volume for whatever is currently
+media_control.py — Universal play/pause/skip for whatever is currently
 playing (Spotify, YouTube, any media/music player) — not tied to one app.
 
 Uses the OS's own media-transport keys wherever possible, so it works with
 anything that already responds to a hardware play/pause/next-track button:
 no API key, no login, no per-app integration to maintain.
+
+Volume/mute are deliberately NOT handled here — actions/computer_settings.py
+owns system volume (undo support, precise pycaw-based levels on Windows,
+consistent ±10% steps everywhere). Two tools both claiming volume_up/
+volume_down/mute made Gemini pick between them non-deterministically, so a
+"volume up" could land as this module's single, barely-perceptible key press
+instead of computer_settings' full step — indistinguishable from "not
+working" to the user. Keep this module to play/pause/skip only.
 """
 import platform
 import shutil
@@ -25,15 +33,12 @@ _ALIASES = {
     "next":       {"next", "skip", "next_track", "forward"},
     "previous":   {"previous", "prev", "back", "previous_track", "last_track"},
     "stop":       {"stop"},
-    "volume_up":  {"volume_up", "louder", "turn_it_up"},
-    "volume_down":{"volume_down", "quieter", "turn_it_down"},
-    "mute":       {"mute"},
 }
 
 # Canonical key -> pyautogui / Windows-Mac-Linux key name
 _PYAUTOGUI_KEY = {
     "play_pause": "playpause", "next": "nexttrack", "previous": "prevtrack",
-    "stop": "stop", "volume_up": "volumeup", "volume_down": "volumedown", "mute": "volumemute",
+    "stop": "stop",
 }
 
 _PLAYERCTL_CMD = {
@@ -49,7 +54,6 @@ _MAC_SCRIPT = {
 _LABEL = {
     "play_pause": "Toggled play/pause.", "next": "Skipped to the next track.",
     "previous": "Went back to the previous track.", "stop": "Stopped playback.",
-    "volume_up": "Volume up.", "volume_down": "Volume down.", "mute": "Muted.",
 }
 
 
@@ -86,19 +90,19 @@ def _mac_apple_events(canonical: str) -> bool:
 PLUGIN = {
     "name": "media_control",
     "description": (
-        "Controls whatever is currently playing on the computer — Spotify, YouTube, "
-        "or any other media/music player — using the system's play/pause/skip/volume "
+        "Controls playback of whatever is currently playing on the computer — Spotify, "
+        "YouTube, or any other media/music player — using the system's play/pause/skip "
         "transport controls. Use for requests like 'pause the music', 'skip this song', "
-        "'next track', 'go back a track', 'resume playback', 'stop the music', "
-        "'turn the music up/down', 'mute'. Do NOT use this to open an app or play a "
-        "specific song by name — use open_app or youtube_video for that."
+        "'next track', 'go back a track', 'resume playback', 'stop the music'. Do NOT use "
+        "this for volume or mute — use computer_settings for those. Do NOT use this to open "
+        "an app or play a specific song by name — use open_app or youtube_video for that."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "play_pause | next | previous | stop | volume_up | volume_down | mute",
+                "description": "play_pause | next | previous | stop",
             }
         },
         "required": ["action"],
@@ -111,8 +115,8 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     canonical = _resolve(str(action))
     if not canonical:
         return (
-            f"Unknown media action: '{action}'. "
-            f"Try: play_pause, next, previous, volume_up, volume_down, mute, stop."
+            f"Unknown media action: '{action}'. Try: play_pause, next, previous, stop. "
+            f"For volume or mute, use computer_settings instead."
         )
 
     ok = False
