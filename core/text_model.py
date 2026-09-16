@@ -13,7 +13,12 @@ Groq's chat-completions endpoint wrapped here is text-only.
 
 Configure by adding to config/api_keys.json:
     "groq_api_key": "gsk_...",
-    "groq_model":   "llama-3.3-70b-versatile"   (optional, this is the default)
+    "groq_model":   "openai/gpt-oss-120b"   (optional, this is the default)
+
+Groq retires models on a rolling basis and a retired name returns 404 here,
+which silently sends every text action down the slow Gemini path. If that
+starts happening, list what the key can actually reach —
+GET https://api.groq.com/openai/v1/models — and update the name.
 Leaving groq_api_key unset just means every call goes straight to Gemini,
 exactly like before this module existed.
 """
@@ -26,7 +31,7 @@ from pathlib import Path
 import requests
 
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-_DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+_DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 
 
 def _base_dir() -> Path:
