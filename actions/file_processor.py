@@ -32,14 +32,11 @@ def _get_api_key() -> str:
 
 
 def _gemini_client():
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
-
-    class _W:
-        def generate_content(self, contents):
-            return _c.models.generate_content(model="gemini-flash-latest", contents=contents)
-
-    return _W()
+    # Despite the name, this now prefers Groq for plain-text prompts (fallback
+    # Gemini) — image/audio contents (vision, transcribe) are auto-detected
+    # and always sent to Gemini, since Groq's endpoint here is text-only.
+    from core.text_model import get_text_model
+    return get_text_model()
 
 
 def _detect_type(path: Path) -> str:

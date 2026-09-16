@@ -168,25 +168,19 @@ def _get_transcript(video_id: str) -> str | None:
 
 
 def _summarize_with_gemini(transcript: str, video_url: str) -> str:
-    from google import genai as _genai
-    from google.genai import types
+    from core.text_model import get_text_model
 
-    _client = _genai.Client(api_key=_get_api_key())
     max_chars = 80000
     truncated = transcript[:max_chars] + ("..." if len(transcript) > max_chars else "")
-    response  = _client.models.generate_content(
-        model="gemini-flash-latest",
-        contents=f"Please summarize this YouTube video transcript:\n\n{truncated}",
-        config=types.GenerateContentConfig(
-            system_instruction=(
-                "You are JUDO, an AI assistant. "
-                "Summarize YouTube video transcripts clearly and concisely. "
-                "Structure: 1-sentence overview, then 3-5 key points. "
-                "Be direct. Address the user as 'sir'. "
-                "Match the language of the transcript."
-            )
-        )
+    prompt = (
+        "You are JUDO, an AI assistant. "
+        "Summarize YouTube video transcripts clearly and concisely. "
+        "Structure: 1-sentence overview, then 3-5 key points. "
+        "Be direct. Address the user as 'sir'. "
+        "Match the language of the transcript.\n\n"
+        f"Please summarize this YouTube video transcript:\n\n{truncated}"
     )
+    response = get_text_model().generate_content(prompt)
     return response.text.strip()
 
 

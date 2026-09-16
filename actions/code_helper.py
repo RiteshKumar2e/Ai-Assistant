@@ -25,14 +25,8 @@ def _get_api_key() -> str:
 
 
 def _get_gemini(model: str = GEMINI_MODEL):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
-
-    class _W:
-        def generate_content(self, contents):
-            return _c.models.generate_content(model=model, contents=contents)
-
-    return _W()
+    from core.text_model import get_text_model
+    return get_text_model(gemini_model=model)
 
 
 def _clean_code(text: str) -> str:
