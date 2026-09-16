@@ -5,6 +5,7 @@ import re
 import time
 from pathlib import Path
 from core import user_paths
+from memory import self_training
 
 
 def get_base_dir():
@@ -155,8 +156,9 @@ def _detect_intent(description: str, file_path: str, code: str) -> str:
     return "write"
 
 def _write(description: str, language: str, output_path: str, player=None) -> tuple[str, Path]:
-    lang  = language or "python"
-    model = _get_gemini()
+    lang    = language or "python"
+    model   = _get_gemini()
+    lessons = self_training.get_coding_lessons(lang)
 
     prompt = f"""You are an expert {lang} developer.
 Write clean, working, well-commented {lang} code for the description below.
@@ -167,7 +169,7 @@ Rules:
 - Handle errors and edge cases properly.
 - Use modern best practices.
 
-Description: {description}
+{lessons + chr(10) if lessons else ""}Description: {description}
 
 Code:"""
 
@@ -252,6 +254,7 @@ def _build(description, language, output_path, args, timeout, speak=None, player
         return msg
 
     last_output = ""
+    first_error = ""
     for attempt in range(1, MAX_BUILD_ATTEMPTS + 1):
         print(f"[Code] 🔄 Attempt {attempt}/{MAX_BUILD_ATTEMPTS}")
         if player:
@@ -260,6 +263,11 @@ def _build(description, language, output_path, args, timeout, speak=None, player
         last_output = _run_file(path, args, timeout)
 
         if not _has_error(last_output):
+            if attempt > 1 and first_error:
+                self_training.log_coding_lesson(
+                    lang, first_error,
+                    f"For '{description[:80]}', this error happened — regenerate with that fix in mind."
+                )
             msg = (
                 f"Build complete, sir. "
                 f"The code is working after {attempt} attempt{'s' if attempt > 1 else ''}. "
@@ -267,6 +275,9 @@ def _build(description, language, output_path, args, timeout, speak=None, player
             )
             if speak: speak(msg)
             return f"{msg}\n\nOutput:\n{last_output}"
+
+        if attempt == 1:
+            first_error = next((l.strip() for l in last_output.splitlines() if l.strip()), "")[:120]
 
         print(f"[Code] ⚠️ Error on attempt {attempt}, fixing...")
         if player:

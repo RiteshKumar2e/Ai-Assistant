@@ -5,6 +5,7 @@ import re
 import time
 from pathlib import Path
 from core import user_paths
+from memory import self_training
 
 
 def get_base_dir():
@@ -171,6 +172,8 @@ def _write_file(
             code_snippet = already_written[dep_path][:2000]
             dependency_context += f"\n\n--- {dep_path} (you must import from this) ---\n{code_snippet}"
 
+    lessons = self_training.get_coding_lessons(language)
+
     lang_rules = ""
     if language.lower() == "python":
         lang_rules = """
@@ -203,7 +206,7 @@ Purpose of this file: {file_desc}
 
 {lang_rules}
 
-General rules:
+{lessons + chr(10) if lessons else ""}General rules:
 - Output ONLY raw code. Absolutely no explanation, no markdown, no triple backticks.
 - Write COMPLETE, RUNNABLE code — no placeholders, no "# TODO", no "pass" stubs.
 - Every import must either be from the standard library, listed dependencies, or the project files shown above.
@@ -514,8 +517,9 @@ def _build_project(
 
     _open_vscode(project_dir)
 
-    last_output   = ""
-    auto_installs = 0  
+    last_output       = ""
+    auto_installs     = 0
+    first_error_type  = ""
 
     for attempt in range(1, MAX_FIX_ATTEMPTS + 1):
         log(f"Running project (attempt {attempt}/{MAX_FIX_ATTEMPTS})...")
@@ -523,6 +527,11 @@ def _build_project(
         log(f"Output preview: {last_output[:150]}")
 
         if not _has_error(last_output, run_command):
+            if attempt > 1 and first_error_type:
+                self_training.log_coding_lesson(
+                    language, first_error_type,
+                    f"For '{description[:80]}', a {first_error_type} happened — plan/write with that in mind."
+                )
             msg = (
                 f"Project '{proj_name}' is working, sir. "
                 f"Built in {attempt} attempt{'s' if attempt > 1 else ''}. "
@@ -531,10 +540,13 @@ def _build_project(
             if speak: speak(msg)
             return f"{msg}\n\nOutput:\n{last_output}"
 
+        error_type = _classify_error(last_output)
+        if attempt == 1:
+            first_error_type = error_type
+
         if attempt == MAX_FIX_ATTEMPTS:
             break
 
-        error_type = _classify_error(last_output)
         if error_type == "dependency_error" and auto_installs < 3:
             installed = _try_auto_install(last_output, project_dir)
             if installed:

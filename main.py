@@ -56,6 +56,7 @@ from memory.memory_manager import (
     save_session_summary, pop_last_session,
     search_memory, set_trim_notifier,
 )
+from memory import self_training
 
 # The file-backed tools (open_app, web_search, browser_control, …) are no longer
 # imported or declared here — they self-describe via a TOOL dict in their own
@@ -418,6 +419,7 @@ class JudoLive:
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
+        self._last_action_tool = ""                # name+args of the last non-undo tool call, for self-training
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
 
@@ -816,6 +818,9 @@ class JudoLive:
         parts = [time_ctx, identity_ctx]
         if mem_str:
             parts.append(mem_str)
+        lessons_str = self_training.format_lessons_for_prompt()
+        if lessons_str:
+            parts.append(lessons_str)
         parts.append(sys_prompt)
 
         cfg = dict(
@@ -864,6 +869,10 @@ class JudoLive:
         print(f"[JUDO] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
+        if name != "undo":
+            _preview = ", ".join(f"{k}={v}" for k, v in list(args.items())[:3])
+            self._last_action_tool = f"{name}({_preview})" if _preview else name
+
         if name == "save_memory":
             category = args.get("category", "notes")
             key      = args.get("key", "")
@@ -896,7 +905,15 @@ class JudoLive:
                               + "\n".join(f"{i+1}. {t}" for i, t in enumerate(items))
                               ) if items else "I have not changed anything I can undo yet."
                 else:
+                    prior_action = self._last_action_tool
                     result = await loop.run_in_executor(None, undo_stack.undo_last)
+                    if prior_action and not result.startswith("There is nothing to undo"):
+                        prior_command = next(
+                            (t[len("User: "):] for t in reversed(self._session_log) if t.startswith("User: ")),
+                            ""
+                        )
+                        if prior_command:
+                            self_training.log_understanding_mistake(prior_command, prior_action)
 
             elif name == "screen_process":
                 import time as _t_mod
