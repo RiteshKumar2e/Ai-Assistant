@@ -509,7 +509,17 @@ class _BrowserSession:
             name=f"BrowserThread-{self.browser_name}",
         )
         self._thread.start()
-        self._ready.wait(timeout=20)
+        # If _async_init() (spinning up the Playwright driver) hasn't finished
+        # within 20s — a loaded system, first-run driver startup — this used to
+        # return anyway and let the caller use self._pw while it was still None,
+        # surfacing as a baffling "'NoneType' object has no attribute 'chromium'"
+        # instead of a clear error. The registry never caches this session on
+        # failure (see _get_or_create), so the next call just tries again fresh.
+        if not self._ready.wait(timeout=20):
+            raise RuntimeError(
+                f"Browser automation engine for '{self.browser_name}' did not "
+                f"initialize within 20s (system may be under heavy load) — please try again."
+            )
 
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()

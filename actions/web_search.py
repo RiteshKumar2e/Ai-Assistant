@@ -25,7 +25,9 @@ def _gemini_search(query: str) -> str:
     response = client.models.generate_content(
         model="gemini-flash-latest",
         contents=query,
-        config={"tools": [{"google_search": {}}]},
+        # google_search is grounding, not a function the model calls back through —
+        # disabling AFC silences the SDK's unrelated "use AFC in Chat" warning.
+        config={"tools": [{"google_search": {}}], "automatic_function_calling": {"disable": True}},
     )
 
     text = ""
@@ -126,7 +128,7 @@ def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
     response = client.models.generate_content(
         model="gemini-flash-latest",
         contents=f"Current world news: {n} headlines. Numbered list, titles only.",
-        config={"tools": [{"google_search": {}}]},
+        config={"tools": [{"google_search": {}}], "automatic_function_calling": {"disable": True}},
     )
 
     raw = ""

@@ -1112,6 +1112,22 @@ class JudoLive:
             while True:
                 async for response in self.session.receive():
 
+                    # ── GoAway ────────────────────────────────────────────────
+                    # The server sends this shortly before it force-closes the
+                    # connection for exceeding the max session duration. If we
+                    # just keep reading, the server hangs up on us with a 1008
+                    # policy violation ("client failed to close the connection
+                    # after receiving a GoAway") which blows up the TaskGroup
+                    # with a scary traceback and a full error-path reconnect.
+                    # Treat it the same as a voluntary reconnect instead: unwind
+                    # cleanly, replay the resumption handle, no backoff, no
+                    # error log — the user should never notice this happened.
+                    _go_away = getattr(response, "go_away", None)
+                    if _go_away is not None:
+                        print(f"[JUDO] 🔌 GoAway received (time_left="
+                              f"{getattr(_go_away, 'time_left', '?')}) — reconnecting cleanly")
+                        raise _ReconnectSignal(keep_context=True)
+
                     # ── Session resumption ───────────────────────────────────
                     # The server sends this periodically. `resumable` goes false
                     # while a turn is mid-flight — replaying a handle from that
