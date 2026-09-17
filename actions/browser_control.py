@@ -734,6 +734,10 @@ class _BrowserSession:
         # stale lock or pop a 'Restore pages?' prompt nobody is there to click,
         # both surfacing as "did not open its debug port in time" below.
         _clear_stale_profile_state(profile)
+        # Recorded BEFORE the slow part so the very next call — if it lands
+        # while this one is still opening its debug port — hits the grace
+        # path above instead of killing this process it just started.
+        self._last_relaunch_attempt = time.monotonic()
         subprocess.Popen(
             [exe,
              f"--remote-debugging-port={port}",
@@ -754,7 +758,13 @@ class _BrowserSession:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
 
-        if not _wait_for_cdp(port, timeout=30.0):
+        # Raised from 30s to 40s after this fired twice in real use with
+        # --restore-last-session bringing back a real, many-tab profile under
+        # heavy system load. A timeout here no longer means the next action
+        # kills and restarts again from scratch — see the grace path above,
+        # which now gives an in-progress startup like this one more time
+        # instead of compounding it with a second Chrome process.
+        if not _wait_for_cdp(port, timeout=40.0):
             raise RuntimeError(f"{self.browser_name} did not open its debug port in time.")
 
         await self._attach_cdp(port, label)
