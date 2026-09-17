@@ -126,23 +126,15 @@ def _pcm_level(samples) -> float:
     return min(1.0, (rms - _LEVEL_FLOOR) / (_LEVEL_FULL - _LEVEL_FLOOR))
 
 
-# Raw mic PCM otherwise goes to Gemini/wake-word/gender-estimator completely
-# unamplified — a quiet talker produces low-amplitude int16 samples that
-# Gemini's own VAD/ASR and the wake-word model can under-hear or miss
-# outright. This boosts only quiet frames up toward a comfortable target
-# loudness; already-loud speech and room silence/hiss are left untouched, so
-# it never distorts a normal voice or amplifies background noise into speech.
-_AGC_TARGET_RMS = 1800.0   # comfortable "normal speaking voice" level to boost quiet frames toward
-_AGC_MAX_GAIN   = 6.0      # cap so near-silent room noise never gets blasted to full volume
-
-
-def _boost_quiet_speech(indata: np.ndarray) -> np.ndarray:
-    x   = indata.astype(np.float32)
-    rms = float(np.sqrt(np.mean(x * x))) if x.size else 0.0
-    if rms <= _LEVEL_FLOOR or rms >= _AGC_TARGET_RMS:
-        return indata
-    gain = min(_AGC_MAX_GAIN, _AGC_TARGET_RMS / max(rms, 1.0))
-    return np.clip(x * gain, -32768, 32767).astype(np.int16)
+# NOTE: a per-block quiet-speech gain boost lived here briefly (2026-09-17) and
+# was reverted the same day — computing gain independently per 64ms callback
+# block with no attack/release smoothing produced audible discontinuities
+# whenever loudness crossed the boost threshold mid-word, and JUDO stopped
+# responding to speech at all (stuck on LISTENING, never THINKING) right after
+# it shipped. If quiet-speech capture needs revisiting, it must smooth gain
+# across consecutive blocks (an exponential moving average on the gain factor,
+# not a fresh RMS-based decision every block) before it touches the audio
+# actually sent to Gemini.
 
 
 def _load_system_prompt() -> str:
@@ -1055,14 +1047,6 @@ class JudoLive:
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
-            # Any failure here (unexpected dtype/shape from a particular driver)
-            # must fall back to the raw frame, never break the mic callback —
-            # an unhandled exception in this thread silently kills the whole
-            # audio stream with no error surfaced to the rest of the app.
-            try:
-                indata = _boost_quiet_speech(indata)
-            except Exception:
-                pass
             # ── Wake-word gate ───────────────────────────────────────────────
             # While asleep, the mic audio NEVER goes to Gemini (nothing is
             # streamed, so JUDO can't respond to speech not addressed to it and

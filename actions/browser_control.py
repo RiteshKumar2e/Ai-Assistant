@@ -1033,12 +1033,25 @@ class _SessionRegistry:
 
     def _get_or_create(self, browser_name: str) -> _BrowserSession:
         with self._lock:
-            if browser_name not in self._sessions:
-                sess = _BrowserSession(browser_name)
-                sess.start()
-                self._sessions[browser_name] = sess
+            sess = self._sessions.get(browser_name)
+        if sess is not None:
+            return sess
+
+        # sess.start() blocks for up to _INIT_TIMEOUT (45s) spinning up the
+        # Playwright driver — done OUTSIDE the lock, or every unrelated
+        # browser_control call (switch/list/close, even for a different
+        # browser) would queue up behind it for no reason.
+        new_sess = _BrowserSession(browser_name)
+        new_sess.start()
+        with self._lock:
+            sess = self._sessions.get(browser_name)
+            if sess is None:
+                self._sessions[browser_name] = sess = new_sess
                 print(f"[Registry] New session: {browser_name}")
-            return self._sessions[browser_name]
+            # else: another thread already created one for this browser_name in
+            # the meantime (rare race) — new_sess is simply left unreferenced;
+            # its daemon thread stays idle and dies with the process.
+        return sess
 
     def get(self, browser_name: str | None = None) -> _BrowserSession:
         if not browser_name:
