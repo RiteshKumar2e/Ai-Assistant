@@ -62,7 +62,7 @@ def _parse_date(raw: str) -> str:
 
     try:
         from core.text_model import get_text_model
-        response = get_text_model(gemini_model="gemini-flash-lite-latest").generate_content(
+        response = get_text_model().generate_content(
             f"Today is {today.strftime('%Y-%m-%d')}. "
             f"Convert this date expression to YYYY-MM-DD: '{raw}'. "
             f"Return ONLY the date string, nothing else."

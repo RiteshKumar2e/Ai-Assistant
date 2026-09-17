@@ -1,0 +1,74 @@
+{
+  "_readme": [
+    "This is the single source of truth for which text-generation models JUDO tries, and in what order.",
+    "core/text_model.py reads this file at call time — edit here, no code change needed.",
+    "Each entry is {id, note}: 'id' is the exact API model name, 'note' says why it is in the chain",
+    "and at what position. JSON has no comment syntax, so 'note' IS the comment.",
+    "",
+    "gemini list  = tried only when Groq is unavailable/exhausted, or for multimodal (images) and",
+    "               grounded web search (actions/web_search.py) — Groq has neither capability.",
+    "groq list    = tried FIRST for every plain-text call (huge free quota, fastest).",
+    "",
+    "2026-09-17: user asked for 20 models per provider. Checked exhaustively before answering —",
+    "all 5 configured Gemini API keys (config/api_keys.json -> gemini_api_keys) were queried via",
+    "models.list(), all returned the identical 58-model catalogue (same tier), and the Groq key's",
+    "full 13-model catalogue was pulled from GET /v1/models. The real, working, text-generating",
+    "count on THIS account is 12 for Gemini and 7 for Groq — see the _excluded_* lists below for",
+    "exactly what was tried and why it was left out (nothing was skipped without testing it first).",
+    "Padding either list to 20 would mean adding models confirmed to 404/400/429-permanently — that",
+    "makes the chain slower (every real call wastes time on a guaranteed failure first), not safer.",
+    "",
+    "Ordering rule for gemini: Gemma models get 14,400 requests/day on this account's free tier —",
+    "far more than any Gemini-branded model (Flash Lite: 500/day, plain Flash: 20/day; TPM is 250K",
+    "for all of them alike, so RPD headroom is the real differentiator). Gemma sits first, then Lite",
+    "models, then plain Flash, then the self-updating aliases last as a safety net.",
+    "",
+    "Re-verify periodically:",
+    "  Groq:   GET https://api.groq.com/openai/v1/models",
+    "  Gemini: python -c \"from google import genai; [print(m.name) for m in genai.Client(api_key=KEY).models.list()]\"",
+    "A model that starts 404ing has been retired — delete its entry here."
+  ],
+
+  "gemini": [
+    { "id": "gemma-4-26b-a4b-it",           "note": "14,400 req/day on this account — by far the most headroom of anything here. Verified answers correctly. Try first." },
+    { "id": "gemma-4-31b-it",               "note": "Same 14,400 req/day tier as the model above. One test run hit a transient 500 (server-side), a retry succeeded immediately — real, working model." },
+    { "id": "gemini-3.1-flash-lite",        "note": "500 req/day, 0 used on this account as of 2026-09-17 — most headroom of the Gemini-branded models." },
+    { "id": "gemini-3.5-flash-lite",        "note": "500 req/day, ~14/500 used — second most headroom, same Lite tier." },
+    { "id": "gemini-3.1-flash-lite-preview","note": "Preview build of the same Lite family — extra Lite-tier fallback before dropping to 20-req/day models." },
+    { "id": "gemini-3-flash-preview",       "note": "20 req/day, unused. Plain Flash tier (not Lite) — verified answers correctly." },
+    { "id": "gemini-3.6-flash",             "note": "20 req/day, unused. Verified answers correctly." },
+    { "id": "gemini-3.5-flash",             "note": "20 req/day, unused." },
+    { "id": "gemini-3.7-flash",             "note": "20 req/day, unused. Occasionally returns a transient 503 (server overload) — chain just moves on." },
+    { "id": "gemini-3.8-flash",             "note": "20 req/day, 19/20 already used on this account — real model, kept as a fallback but tried near-last since it is the one closest to its daily cap." },
+    { "id": "gemini-flash-latest",          "note": "Google's self-updating 'always current flash' alias. Currently resolves to gemini-3.8-flash. Safety net in case a dated model name above it gets retired." },
+    { "id": "gemini-flash-lite-latest",     "note": "Self-updating 'always current flash-lite' alias — same safety-net role, for the Lite tier." }
+  ],
+
+  "groq": [
+    { "id": "openai/gpt-oss-120b",          "note": "Best quality of the models this Groq key can reach. Tried first — ~0.5-1s responses." },
+    { "id": "openai/gpt-oss-20b",           "note": "Smaller/faster sibling of gpt-oss-120b, near-identical behavior. Second try." },
+    { "id": "qwen/qwen3.8-27b",             "note": "Fastest observed of all candidates (~0.4s). Solid quality." },
+    { "id": "openai/gpt-oss-safeguard-20b", "note": "Content-safety-tuned variant of gpt-oss-20b. Answers plain prompts cleanly; kept as a mid-chain fallback." },
+    { "id": "allam-2-7b",                   "note": "Small general-purpose model. Reliable last-resort before the agentic ones below." },
+    { "id": "groq/compound-mini",           "note": "Groq's lighter agentic/tool-use model. Answers cleanly for plain text." },
+    { "id": "groq/compound",                "note": "Groq's full agentic system — works, but tends to add unrequested commentary instead of a bare answer. Last resort." }
+  ],
+
+  "_excluded_from_gemini": [
+    "gemini-2.5-flash, gemini-2.5-flash-lite — 404 'no longer available to new users' on every call, confirmed on this key.",
+    "gemini-2.0-flash, gemini-2.0-flash-lite, gemini-2.0-flash-001 — 404 'no longer available', confirmed on this key.",
+    "gemini-2.5-pro, gemini-3.1-pro (bare id) — 404 not found, confirmed on this key.",
+    "gemini-3.1-pro-preview, gemini-3.1-pro-preview-customtools, gemini-pro-latest, gemini-omni-flash-preview, gemini-omni-1.1-flash — these DO exist (listed by models.list()) but every call returned 429 RESOURCE_EXHAUSTED; the dashboard shows 0/0 quota for the Pro/Omni tier on this free-tier account, meaning that 429 is permanent, not transient. Re-test if the account is ever upgraded.",
+    "'Live API' models (Gemini 3 Flash Live, 3.8 Live, etc. — shown as 'Unlimited' on the dashboard) — bidirectional-streaming only, confirmed HTTP 400 'only supports real-time bidirectional streaming' on a normal generate_content call. main.py's voice session already uses this API surface separately; it cannot serve one-shot text/code prompts.",
+    "Image (Nano Banana / *-image*), TTS (*-tts*), video (Veo), music (Lyria), embedding (Gemini Embedding) models — wrong output type for a text/code prompt.",
+    "Checked all 5 keys in config/api_keys.json's gemini_api_keys pool on 2026-09-17 — identical 58-model catalogue on every one, so this list is not key-specific."
+  ],
+
+  "_excluded_from_groq": [
+    "meta-llama/llama-prompt-guard-2-22m and -86m — prompt-injection CLASSIFIERS, not chat models: they return a label, not a generated answer.",
+    "canopylabs/orpheus-arabic-saudi and orpheus-v1-english — text-to-speech models.",
+    "whisper-large-v3 and whisper-large-v3-turbo — speech-to-text models.",
+    "llama-3.3-70b-versatile — RETIRED by Groq (confirmed 404 on 2026-09-16). Do not re-add without re-verifying it exists again.",
+    "This Groq key's full catalogue is exactly 13 models (GET /v1/models, checked 2026-09-17); 6 are the ones above, leaving these 7 as the entire usable set — there is no hidden larger catalogue to expand into."
+  ]
+}
