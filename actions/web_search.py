@@ -5,6 +5,8 @@ def _gemini_search(query: str) -> str:
     return generate_grounded_search(query)
 
 
+_DDG_TIMEOUT = 8  # seconds — without this, a slow backend (Yahoo, Bing, ...) can hang the whole call far longer than any caller actually waits for
+
 def _ddg_search(query: str, max_results: int = 6) -> list[dict]:
     try:
         from ddgs import DDGS
@@ -12,7 +14,7 @@ def _ddg_search(query: str, max_results: int = 6) -> list[dict]:
         from duckduckgo_search import DDGS
 
     results = []
-    with DDGS() as ddgs:
+    with DDGS(timeout=_DDG_TIMEOUT) as ddgs:
         for r in ddgs.text(query, max_results=max_results):
             results.append({
                 "title":   r.get("title",  ""),
@@ -31,7 +33,7 @@ def _ddg_news(query: str, max_results: int = 8) -> list[dict]:
 
     results = []
     try:
-        with DDGS() as ddgs:
+        with DDGS(timeout=_DDG_TIMEOUT) as ddgs:
             for r in ddgs.news(query, max_results=max_results):
                 results.append({
                     "title":   r.get("title",  ""),
