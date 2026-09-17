@@ -126,6 +126,25 @@ def _pcm_level(samples) -> float:
     return min(1.0, (rms - _LEVEL_FLOOR) / (_LEVEL_FULL - _LEVEL_FLOOR))
 
 
+# Raw mic PCM otherwise goes to Gemini/wake-word/gender-estimator completely
+# unamplified — a quiet talker produces low-amplitude int16 samples that
+# Gemini's own VAD/ASR and the wake-word model can under-hear or miss
+# outright. This boosts only quiet frames up toward a comfortable target
+# loudness; already-loud speech and room silence/hiss are left untouched, so
+# it never distorts a normal voice or amplifies background noise into speech.
+_AGC_TARGET_RMS = 1800.0   # comfortable "normal speaking voice" level to boost quiet frames toward
+_AGC_MAX_GAIN   = 6.0      # cap so near-silent room noise never gets blasted to full volume
+
+
+def _boost_quiet_speech(indata: np.ndarray) -> np.ndarray:
+    x   = indata.astype(np.float32)
+    rms = float(np.sqrt(np.mean(x * x))) if x.size else 0.0
+    if rms <= _LEVEL_FLOOR or rms >= _AGC_TARGET_RMS:
+        return indata
+    gain = min(_AGC_MAX_GAIN, _AGC_TARGET_RMS / max(rms, 1.0))
+    return np.clip(x * gain, -32768, 32767).astype(np.int16)
+
+
 def _load_system_prompt() -> str:
     try:
         return PROMPT_PATH.read_text(encoding="utf-8")
@@ -1036,6 +1055,7 @@ class JudoLive:
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
+            indata = _boost_quiet_speech(indata)
             # ── Wake-word gate ───────────────────────────────────────────────
             # While asleep, the mic audio NEVER goes to Gemini (nothing is
             # streamed, so JUDO can't respond to speech not addressed to it and
