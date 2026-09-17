@@ -1055,7 +1055,14 @@ class JudoLive:
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
-            indata = _boost_quiet_speech(indata)
+            # Any failure here (unexpected dtype/shape from a particular driver)
+            # must fall back to the raw frame, never break the mic callback —
+            # an unhandled exception in this thread silently kills the whole
+            # audio stream with no error surfaced to the rest of the app.
+            try:
+                indata = _boost_quiet_speech(indata)
+            except Exception:
+                pass
             # ── Wake-word gate ───────────────────────────────────────────────
             # While asleep, the mic audio NEVER goes to Gemini (nothing is
             # streamed, so JUDO can't respond to speech not addressed to it and

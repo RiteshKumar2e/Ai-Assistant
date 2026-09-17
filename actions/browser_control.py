@@ -474,6 +474,9 @@ def _looks_like_dead_context(e: Exception) -> bool:
     return "closed" in msg and ("target page" in msg or "context" in msg or "browser" in msg)
 
 
+_INIT_TIMEOUT = 45  # seconds to wait for the Playwright driver process to come up
+
+
 class _BrowserSession:
     """
     A full session for one browser instance.
@@ -510,15 +513,19 @@ class _BrowserSession:
         )
         self._thread.start()
         # If _async_init() (spinning up the Playwright driver) hasn't finished
-        # within 20s — a loaded system, first-run driver startup — this used to
-        # return anyway and let the caller use self._pw while it was still None,
-        # surfacing as a baffling "'NoneType' object has no attribute 'chromium'"
-        # instead of a clear error. The registry never caches this session on
-        # failure (see _get_or_create), so the next call just tries again fresh.
-        if not self._ready.wait(timeout=20):
+        # within _INIT_TIMEOUT — a loaded system, first-run driver startup —
+        # this used to return anyway and let the caller use self._pw while it
+        # was still None, surfacing as a baffling "'NoneType' object has no
+        # attribute 'chromium'" instead of a clear error. The registry never
+        # caches this session on failure (see _get_or_create), so the next
+        # call just tries again fresh. Raised from 20s to 45s after this fired
+        # on a real machine where the driver process (normally ~2s) got starved
+        # by other apps at 70-85% CPU/RAM — the process just needed more time,
+        # not a different fix.
+        if not self._ready.wait(timeout=_INIT_TIMEOUT):
             raise RuntimeError(
                 f"Browser automation engine for '{self.browser_name}' did not "
-                f"initialize within 20s (system may be under heavy load) — please try again."
+                f"initialize within {_INIT_TIMEOUT}s (system under heavy load) — please try again."
             )
 
     def _run_loop(self):
