@@ -772,7 +772,27 @@ class _BrowserSession:
 
     async def go_to(self, url: str) -> str:
 
-        url      = _normalize_url(url)
+        url = _normalize_url(url)
+
+        # Not already attached, and this is a Chromium browser with no CDP
+        # session up — don't force-restart the user's already-open window
+        # just to load a URL. Chrome's own single-instance lock means
+        # launching `chrome.exe <url>` while it's already running silently
+        # hands the URL to that SAME window as a new tab: no restart, no
+        # debug port touched, nothing closed. (If the browser isn't running
+        # at all, this just opens it fresh, same as double-clicking its
+        # icon.) Only actions that actually need to click/type/read the page
+        # (see click/type/screenshot below) pay the one-time CDP-restart cost.
+        if (self._context is None and self._spec and self._spec["engine"] == "chromium"
+                and not _cdp_alive(_CDP_PORTS.get(self.browser_name, 9222))):
+            exe = self._spec["exe"] or _resolve_exe_path(self.browser_name)
+            if exe:
+                try:
+                    subprocess.Popen([exe, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return f"Opened: {url}"
+                except Exception as e:
+                    print(f"[Browser] Native open failed ({e}) — falling back to automated launch")
+
         page     = await self._get_page()
         prev_url = page.url
 
@@ -960,12 +980,17 @@ class _BrowserSession:
         return f"Could not find input: '{description}' on {page.url}.{shot}"
 
     async def new_tab(self, url: str = "") -> str:
+        # With a URL, this is just navigation — let go_to's own fast path
+        # decide whether that needs a real Playwright page at all (it won't,
+        # for an already-open Chromium browser with no CDP session up).
+        # Forcing _get_page() here first would launch/attach unconditionally
+        # and defeat that.
+        if url:
+            return await self.go_to(url)
         page = await self._get_page()
         ctx  = page.context
         new  = await ctx.new_page()
         self._page = new
-        if url:
-            return await self.go_to(url)
         return "New tab opened."
 
     async def close_tab(self) -> str:
