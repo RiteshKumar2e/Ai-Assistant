@@ -12,10 +12,24 @@ import pytest
 import core.self_trainer as st_mod
 from memory import self_training as st
 
+# Captured at collection time, before any test's monkeypatch runs — the
+# autouse fixture below patches st_mod._system_overloaded for every test in
+# this file, so the handful of tests that verify the REAL function's
+# threshold logic need this untouched reference instead.
+_REAL_SYSTEM_OVERLOADED = st_mod._system_overloaded
+
 
 @pytest.fixture(autouse=True)
 def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "STORE_PATH", tmp_path / "self_training.json")
+
+
+@pytest.fixture(autouse=True)
+def not_overloaded_by_default(monkeypatch):
+    """Every test assumes a normal machine unless it explicitly says
+    otherwise — without this, running the suite on a genuinely busy machine
+    (real psutil reading) would make the scheduling tests flaky."""
+    monkeypatch.setattr(st_mod, "_system_overloaded", lambda: False)
 
 
 @pytest.fixture
@@ -52,6 +66,60 @@ def test_missing_config_file_defaults_to_enabled(tmp_path, monkeypatch):
     monkeypatch.setattr(st_mod, "_base_dir", lambda: tmp_path / "does_not_exist")
     trainer = st_mod.SelfTrainer(min_idle_secs=0, cooldown_secs=0)
     assert trainer.should_trigger(last_user_speech=0.0) is True
+
+
+# ── System-load-aware skip ───────────────────────────────────────────────────
+
+def test_overloaded_system_prevents_trigger(isolated_config, monkeypatch):
+    monkeypatch.setattr(st_mod, "_system_overloaded", lambda: True)
+    trainer = st_mod.SelfTrainer(min_idle_secs=0, cooldown_secs=0)
+    assert trainer.should_trigger(last_user_speech=0.0) is False
+
+
+def test_normal_load_does_not_block_trigger(isolated_config, monkeypatch):
+    monkeypatch.setattr(st_mod, "_system_overloaded", lambda: False)
+    trainer = st_mod.SelfTrainer(min_idle_secs=0, cooldown_secs=0)
+    assert trainer.should_trigger(last_user_speech=0.0) is True
+
+
+def test_system_overloaded_checks_real_thresholds(monkeypatch):
+    # The autouse fixture above patches _system_overloaded itself for every
+    # other test in this file — these three tests are exactly what that
+    # fixture exists to keep out of the way of, so they call the real
+    # underlying function (_REAL_SYSTEM_OVERLOADED, captured at module load
+    # before any test's monkeypatch runs) directly instead of the patched
+    # st_mod._system_overloaded attribute.
+    class _FakePsutil:
+        @staticmethod
+        def cpu_percent(interval=None):
+            return 95.0
+        @staticmethod
+        def virtual_memory():
+            return type("M", (), {"percent": 10.0})()
+
+    import sys
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil())
+    assert _REAL_SYSTEM_OVERLOADED() is True
+
+
+def test_system_overloaded_false_under_normal_readings(monkeypatch):
+    class _FakePsutil:
+        @staticmethod
+        def cpu_percent(interval=None):
+            return 40.0
+        @staticmethod
+        def virtual_memory():
+            return type("M", (), {"percent": 60.0})()
+
+    import sys
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil())
+    assert _REAL_SYSTEM_OVERLOADED() is False
+
+
+def test_system_overloaded_never_raises_if_psutil_unavailable(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "psutil", None)   # simulates ImportError on `import psutil`
+    assert _REAL_SYSTEM_OVERLOADED() is False
 
 
 # ── Idle / cooldown scheduling ───────────────────────────────────────────────

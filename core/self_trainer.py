@@ -69,6 +69,25 @@ def _ask(prompt: str) -> str:
     return (get_text_model().generate_content(prompt).text or "").strip()
 
 
+# Self-training is optional background work — it should never be the thing
+# that pushes an already-struggling machine further into a slowdown, or that
+# competes with a real user request for CPU/RAM right when the machine needs
+# it most. Thresholds are deliberately high (not the everyday 70-80% range
+# a lightly loaded dev machine can sit at) so this only skips at genuinely
+# critical load, not routine usage.
+_CPU_SKIP_THRESHOLD = 90.0
+_RAM_SKIP_THRESHOLD = 90.0
+
+
+def _system_overloaded() -> bool:
+    try:
+        import psutil
+        return (psutil.cpu_percent(interval=None) >= _CPU_SKIP_THRESHOLD
+                or psutil.virtual_memory().percent >= _RAM_SKIP_THRESHOLD)
+    except Exception:
+        return False   # can't tell -> don't block drills over it
+
+
 class SelfTrainer:
     """Decides WHEN to practise and runs one drill. Blocking — call run_drill()
     from a thread so the audio loop is never held up."""
@@ -83,6 +102,8 @@ class SelfTrainer:
 
     def should_trigger(self, last_user_speech: float) -> bool:
         if not _enabled():
+            return False
+        if _system_overloaded():
             return False
         now = time.monotonic()
         return ((now - last_user_speech) >= self.min_idle_secs
