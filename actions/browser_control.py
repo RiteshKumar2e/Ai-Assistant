@@ -711,6 +711,16 @@ class _BrowserSession:
              f"--remote-debugging-port={port}",
              f"--user-data-dir={profile}",
              "--no-first-run",
+             # Force the previous tabs back regardless of the user's own
+             # "on startup" setting — without this, a profile that isn't set
+             # to "Continue where you left off" reopens to a blank new-tab
+             # page after the restart above, i.e. every open tab looks like
+             # it just vanished. --restore-last-session reads the same
+             # continuously-autosaved session data Chrome's own crash-restore
+             # infobar would have used — pairing it with the exit_type/
+             # exited_cleanly patch above means tabs come back WITHOUT that
+             # infobar ever popping up asking someone to click it.
+             "--restore-last-session",
              "--disable-blink-features=AutomationControlled",
              "--disable-default-apps",
              "--no-default-browser-check"],
