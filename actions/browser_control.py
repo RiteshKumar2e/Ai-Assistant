@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import os
 import platform
 import shutil
@@ -443,6 +444,32 @@ def _terminate(browser_name: str) -> None:
         pass
 
 
+def _clear_stale_profile_state(profile_dir: str) -> None:
+    """After taskkill /F, the profile is left in the same state as a crash:
+    Singleton* lock files still reference the now-dead PID, and Chrome marks
+    the profile as 'exited uncleanly'. On relaunch that can either confuse the
+    new process (rare hang while it evaluates the stale lock) or pop the
+    'Chrome didn't shut down correctly — Restore pages?' prompt, which sits
+    there waiting for a click no one is going to make — both show up here as
+    "did not open its debug port in time". Best-effort and non-fatal: if any
+    step fails, relaunch proceeds exactly as before this existed."""
+    root = Path(profile_dir)
+    for lock in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        try:
+            (root / lock).unlink(missing_ok=True)
+        except Exception:
+            pass
+    try:
+        prefs_path = root / "Default" / "Preferences"
+        prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+        profile = prefs.setdefault("profile", {})
+        profile["exit_type"]      = "Normal"
+        profile["exited_cleanly"] = True
+        prefs_path.write_text(json.dumps(prefs), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _resolve_exe_path(name: str) -> Optional[str]:
     """Best-effort path to the real browser executable, for spawning it
     ourselves with the CDP debug flag (as opposed to Playwright's own
@@ -673,6 +700,12 @@ class _BrowserSession:
             raise RuntimeError(f"Could not locate an executable for {self.browser_name}.")
 
         profile = _real_profile_dir(self.browser_name)
+        # A taskkill /F above (or any earlier crash) leaves the profile marked
+        # 'exited uncleanly' with stale Singleton* lock files still pointing at
+        # the dead PID — left alone, the relaunch can either sit stuck on that
+        # stale lock or pop a 'Restore pages?' prompt nobody is there to click,
+        # both surfacing as "did not open its debug port in time" below.
+        _clear_stale_profile_state(profile)
         subprocess.Popen(
             [exe,
              f"--remote-debugging-port={port}",
@@ -684,7 +717,7 @@ class _BrowserSession:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
 
-        if not _wait_for_cdp(port, timeout=20.0):
+        if not _wait_for_cdp(port, timeout=30.0):
             raise RuntimeError(f"{self.browser_name} did not open its debug port in time.")
 
         await self._attach_cdp(port, label)
