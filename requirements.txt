@@ -49,6 +49,9 @@ pywinauto;  sys_platform == "win32"
 pywin32;    sys_platform == "win32"
 wmi;        sys_platform == "win32"
 
+# ── Tests (not needed to run JUDO itself — only for `pytest tests/`) ─────────
+pytest
+
 # ── Optional: local wake word ("Hey Judo") ──────────────────────────────────
 # Deliberately NOT installed by default — it's opt-in. Enable it (and download
 # the tiny model) with one click from ⚙ → WAKE WORD in the app, or install it

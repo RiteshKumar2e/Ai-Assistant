@@ -721,7 +721,6 @@ class _BrowserSession:
              # exited_cleanly patch above means tabs come back WITHOUT that
              # infobar ever popping up asking someone to click it.
              "--restore-last-session",
-             "--disable-blink-features=AutomationControlled",
              "--disable-default-apps",
              "--no-default-browser-check"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

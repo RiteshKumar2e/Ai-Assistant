@@ -68,7 +68,8 @@ _MODELS_PATH = _base_dir() / "config" / "models.json"
 
 def _load_config() -> dict:
     try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+        data = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
@@ -117,6 +118,14 @@ def _flatten_text(contents) -> str:
     return contents if isinstance(contents, str) else "\n\n".join(contents)
 
 
+def _gemini_is_auth_error(e: Exception) -> bool:
+    """A rejected Gemini key returns 400 INVALID_ARGUMENT (not 401/403), so the
+    HTTP code alone can't distinguish it from an ordinary bad request — match
+    on the SDK's own message text instead."""
+    msg = str(getattr(e, "message", "") or e).lower()
+    return "api key not valid" in msg or "api_key_invalid" in msg
+
+
 def _groq_generate(prompt: str, preferred: str | None) -> str:
     key = _groq_api_key()
     if not key:
@@ -133,8 +142,19 @@ def _groq_generate(prompt: str, preferred: str | None) -> str:
                 json={"model": model, "messages": [{"role": "user", "content": prompt}]},
                 timeout=60,
             )
+            # A rejected key fails identically for every model in the chain —
+            # detected once, there is no point burning the rest of it on the
+            # same 401/403. Anything else (404 retired, 429 quota, 5xx, a
+            # network timeout) is exactly the kind of per-model failure the
+            # chain exists to route around, so it just moves on.
+            if resp.status_code in (401, 403):
+                raise RuntimeError("Groq API key rejected — check config/api_keys.json's groq_api_key.")
             resp.raise_for_status()
             return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+        except RuntimeError as e:
+            last_err = e
+            print(f"[TextModel] {e} — skipping remaining Groq models")
+            break
         except Exception as e:
             last_err = e
             print(f"[TextModel] Groq {model} failed ({e}) — trying next")
@@ -157,6 +177,9 @@ def _gemini_generate(contents, preferred: str | None) -> str:
             return (response.text or "").strip()
         except Exception as e:
             last_err = e
+            if _gemini_is_auth_error(e):
+                print("[TextModel] Gemini API key rejected — skipping remaining Gemini models")
+                break
             print(f"[TextModel] Gemini {model} failed ({e}) — trying next")
     raise last_err or RuntimeError("No Gemini models configured.")
 
@@ -188,6 +211,9 @@ def generate_grounded_search(prompt: str, preferred: str | None = None) -> str:
             return text
         except Exception as e:
             last_err = e
+            if _gemini_is_auth_error(e):
+                print("[TextModel] Gemini API key rejected — skipping remaining Gemini models")
+                break
             print(f"[TextModel] Gemini {model} (grounded) failed ({e}) — trying next")
     raise last_err or RuntimeError("No Gemini models configured.")
 

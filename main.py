@@ -1047,39 +1047,49 @@ class JudoLive:
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
-            # ── Wake-word gate ───────────────────────────────────────────────
-            # While asleep, the mic audio NEVER goes to Gemini (nothing is
-            # streamed, so JUDO can't respond to speech not addressed to it and
-            # nothing leaves the machine). Frames are instead handed to the local
-            # detector, which runs its model in ITS OWN thread — the cost here is
-            # only a queue push, so the audio path is never slowed. When wake word
-            # is off (default) or we're awake, this is a single boolean check.
-            if self._wake_enabled and not self._awake:
-                det = self._wake_detector
-                if det is not None:
-                    det.feed(indata)
-                return
-            with self._speaking_lock:
-                judo_speaking = self._is_speaking
-            if not judo_speaking and not self.ui.muted and not self._phone_active:
-                # Only real, currently-heard user speech should shape the
-                # gender guess — never JUDO's own voice or silence.
-                try:
-                    self._gender_estimator.feed(indata, SEND_SAMPLE_RATE)
-                except Exception:
-                    pass
-                data = indata.tobytes()
-                loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
-                )
-                # Feed the live mic level to the HUD so the waveform reacts to
-                # the user's actual voice while listening. Purely cosmetic — any
-                # failure here must never disturb the mic.
-                try:
-                    self.ui.set_audio_level(_pcm_level(indata))
-                except Exception:
-                    pass
+            # Outer safety net: sounddevice stops the WHOLE input stream if this
+            # callback ever raises — so any unexpected failure here (e.g.
+            # call_soon_threadsafe on a loop mid-teardown during a reconnect)
+            # must drop just this one frame, never take the mic down with it.
+            # The two inner try/excepts below are for known-cosmetic paths and
+            # stay as extra documentation of intent; this one is the backstop.
+            try:
+                # ── Wake-word gate ───────────────────────────────────────────
+                # While asleep, the mic audio NEVER goes to Gemini (nothing is
+                # streamed, so JUDO can't respond to speech not addressed to it
+                # and nothing leaves the machine). Frames are instead handed to
+                # the local detector, which runs its model in ITS OWN thread —
+                # the cost here is only a queue push, so the audio path is
+                # never slowed. When wake word is off (default) or we're
+                # awake, this is a single boolean check.
+                if self._wake_enabled and not self._awake:
+                    det = self._wake_detector
+                    if det is not None:
+                        det.feed(indata)
+                    return
+                with self._speaking_lock:
+                    judo_speaking = self._is_speaking
+                if not judo_speaking and not self.ui.muted and not self._phone_active:
+                    # Only real, currently-heard user speech should shape the
+                    # gender guess — never JUDO's own voice or silence.
+                    try:
+                        self._gender_estimator.feed(indata, SEND_SAMPLE_RATE)
+                    except Exception:
+                        pass
+                    data = indata.tobytes()
+                    loop.call_soon_threadsafe(
+                        self.out_queue.put_nowait,
+                        {"data": data, "mime_type": "audio/pcm"}
+                    )
+                    # Feed the live mic level to the HUD so the waveform reacts
+                    # to the user's actual voice while listening. Purely
+                    # cosmetic — any failure here must never disturb the mic.
+                    try:
+                        self.ui.set_audio_level(_pcm_level(indata))
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"[JUDO] ⚠️ Mic callback error (frame dropped, stream continues): {e}")
 
         try:
             def _open_mic(dev):

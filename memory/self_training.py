@@ -47,6 +47,17 @@ def _empty() -> dict:
     return {"understanding": [], "coding": []}
 
 
+def _sanitize_section(value) -> list[dict]:
+    """A hand-edited or partially-corrupted store can have a section that
+    isn't a list, or a list containing non-dict junk — every reader below
+    does e.get(...)/e[...] on each entry, so one bad entry would otherwise
+    crash prompt-building (format_lessons_for_prompt runs on every session
+    start) rather than just losing that one lesson."""
+    if not isinstance(value, list):
+        return []
+    return [e for e in value if isinstance(e, dict)]
+
+
 def _read() -> dict:
     """Unlocked — callers hold _lock."""
     if not STORE_PATH.exists():
@@ -55,9 +66,10 @@ def _read() -> dict:
         data = json.loads(STORE_PATH.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return _empty()
-        data.setdefault("understanding", [])
-        data.setdefault("coding", [])
-        return data
+        return {
+            "understanding": _sanitize_section(data.get("understanding")),
+            "coding":        _sanitize_section(data.get("coding")),
+        }
     except Exception as e:
         print(f"[SelfTraining] load error: {e}")
         return _empty()
@@ -65,11 +77,18 @@ def _read() -> dict:
 
 def _write(data: dict) -> None:
     """Unlocked — callers hold _lock. Writes to a temp file first so a crash
-    mid-write leaves the previous store intact rather than a truncated one."""
-    STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STORE_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(STORE_PATH)
+    mid-write leaves the previous store intact rather than a truncated one.
+    A failure here (e.g. disk full) is swallowed on purpose: losing one new
+    lesson is fine, but log_understanding_mistake/log_coding_lesson must
+    never raise into a caller like undo's tool dispatch, where it would turn
+    an action that actually succeeded into a reported failure."""
+    try:
+        STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STORE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(STORE_PATH)
+    except OSError as e:
+        print(f"[SelfTraining] Could not save lesson store ({e}) — this lesson will not persist.")
 
 
 def _prepend(section: str, entry: dict, dedupe_keys: tuple[str, ...], cap: int) -> None:
@@ -134,18 +153,18 @@ def get_coding_lessons(language: str, limit: int = 5) -> str:
     limit    = max(1, min(int(limit), MAX_PROMPT_ITEMS))
     with _lock:
         entries = [e for e in _read().get("coding", []) if e.get("language") == language][:limit]
-    if not entries:
+    lines = [f"- {e['lesson']}" for e in entries if e.get("lesson")]
+    if not lines:
         return ""
-    lines = [f"- {e['lesson']}" for e in entries]
     return "Pitfalls learned from past mistakes in this language — avoid repeating them:\n" + "\n".join(lines)
 
 
 def format_lessons_for_prompt(limit: int = 5) -> str:
     """Small block for the main system prompt: recent misunderstandings to avoid."""
     entries = _recent("understanding", limit)
-    if not entries:
-        return ""
     lines = [f'  - "{e["command"]}" is NOT {e["wrong_action"]} — the user corrected this before.'
-             for e in entries]
+             for e in entries if e.get("command") and e.get("wrong_action")]
+    if not lines:
+        return ""
     return ("[MISTAKES TO AVOID — learned from past corrections, do not repeat]\n"
             + "\n".join(lines) + "\n")
