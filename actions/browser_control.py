@@ -530,6 +530,15 @@ class _BrowserSession:
         # recovery, or a JUDO hiccup would slam the user's whole browser shut.
         self._cdp_browser: Browser | None = None
 
+        # Monotonic time of the last kill+restart this session attempted.
+        # Without tracking this, a slow relaunch (e.g. --restore-last-session
+        # bringing back a large real tab set) that times out waiting for CDP
+        # gets treated as "not running" by the NEXT action and killed and
+        # relaunched all over again — leaving the first attempt's Chrome
+        # process orphaned in the background and making every subsequent
+        # attempt start from a heavier, more loaded machine than the last.
+        self._last_relaunch_attempt = 0.0
+
     def start(self):
         if self._thread and self._thread.is_alive():
             return
@@ -674,6 +683,25 @@ class _BrowserSession:
         if _cdp_alive(port):
             await self._attach_cdp(port, label)
             return
+
+        # 1.5) We ourselves killed and relaunched this browser recently and it
+        #      is still running (didn't crash) but CDP isn't up yet — this is
+        #      almost certainly that SAME relaunch still warming up (loading
+        #      extensions, restoring the previous session's tabs), not a new
+        #      problem. Give it more time instead of killing an in-progress
+        #      startup and launching yet another Chrome process on top of it.
+        since_last_attempt = time.monotonic() - self._last_relaunch_attempt
+        if since_last_attempt < 90 and _is_running(self.browser_name):
+            print(f"[Browser] {self.browser_name} is still starting up from a "
+                  f"relaunch {since_last_attempt:.0f}s ago — waiting instead of "
+                  f"restarting it again.")
+            if _wait_for_cdp(port, timeout=25.0):
+                await self._attach_cdp(port, label)
+                return
+            raise RuntimeError(
+                f"{self.browser_name} is still starting up (system may be under "
+                f"heavy load) — please try again in a moment."
+            )
 
         # 2) Same browser is running WITHOUT debugging enabled. Chromium only
         #    reads --remote-debugging-port at startup, and its single-instance
