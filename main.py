@@ -126,17 +126,6 @@ def _pcm_level(samples) -> float:
     return min(1.0, (rms - _LEVEL_FLOOR) / (_LEVEL_FULL - _LEVEL_FLOOR))
 
 
-def _get_api_key() -> str:
-    """First configured key — used by one-off calls (session summaries) that
-    don't need rotation. The live connection loop uses
-    JudoLive._current_api_key() / _rotate_api_key() instead."""
-    keys = get_gemini_api_keys()
-    if keys:
-        return keys[0]
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
-
-
 def _load_system_prompt() -> str:
     try:
         return PROMPT_PATH.read_text(encoding="utf-8")
@@ -1500,13 +1489,8 @@ class JudoLive:
             "Output ONLY the summary text, nothing else:\n\n" + convo
         )
         try:
-            from google import genai as _genai
-            client = _genai.Client(api_key=_get_api_key())
-            resp   = await asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-flash-latest",
-                contents=prompt,
-            )
+            from core.text_model import get_text_model
+            resp    = await asyncio.to_thread(get_text_model().generate_content, prompt)
             summary = (resp.text or "").strip()
             if summary:
                 save_session_summary(summary, lang)
