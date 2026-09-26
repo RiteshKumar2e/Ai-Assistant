@@ -438,7 +438,7 @@ def youtube_video(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "youtube_video",
-    "description": "Controls YouTube. Use for: playing videos, summarizing a video's content, getting video info, or showing trending videos.",
+    "description": "YouTube: play a video/song by name or topic ('Arijit ke gaane chalao', 'play lofi music', 'rain video lagao'), summarize a video, get video info, or show trending. Pausing/skipping what is ALREADY playing is media_control; volume is computer_settings.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

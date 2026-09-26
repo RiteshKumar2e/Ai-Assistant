@@ -571,7 +571,7 @@ def code_helper(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "code_helper",
-    "description": "Writes, edits, explains, runs, or builds code files.",
+    "description": "Works on ONE code file: write a new script, edit/fix an existing file, explain code, or run/build a file and report its real output. Use for 'python script bana do', 'is file ko run karo', 'ye code explain karo', 'fix this file'. A whole multi-file project from scratch is dev_agent; work inside an existing project/repo (debug why it fails, run its tests, git commit/push) is agent_task.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

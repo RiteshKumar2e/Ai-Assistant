@@ -518,7 +518,7 @@ def computer_control(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_control",
-    "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
+    "description": "Low-level mouse/keyboard automation on whatever is on screen: click at coordinates or on a described element (screen_click), double/right click, move mouse, type or paste a specific text into the focused field, focus a window by title, find an element on screen. Use when a task needs precise clicking/typing into another app. Simple named commands (volume, brightness, close app, fullscreen, scroll, new tab, save, copy, screenshot, lock) are computer_settings; anything inside a website is browser_control.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

@@ -340,7 +340,7 @@ def reminder(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "reminder",
-    "description": "Sets a timed reminder using Task Scheduler.",
+    "description": "Sets a one-off timed alert that pops up/speaks at a specific time: 'remind me at 5 to call mom', '10 minute baad yaad dila dena', 'kal subah 7 baje alarm laga do'. Convert relative times to an absolute date and 24h time. Calendar events/meetings to keep on an agenda are calendar_agenda.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

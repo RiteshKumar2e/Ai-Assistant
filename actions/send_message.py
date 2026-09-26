@@ -270,7 +270,7 @@ def send_message(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "send_message",
-    "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
+    "description": "Sends a chat message to a named contact through the WhatsApp/Telegram desktop app: 'Rahul ko WhatsApp pe bol do main late aaunga', 'message mom that I reached'. Email goes to send_email. Default platform is WhatsApp when none is named.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

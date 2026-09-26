@@ -161,13 +161,13 @@ def _groq_generate(prompt: str, preferred: str | None) -> str:
     raise last_err or RuntimeError("No Groq models configured.")
 
 
-def _gemini_generate(contents, preferred: str | None) -> str:
+def _gemini_generate(contents, preferred: str | None, only: list[str] | None = None) -> str:
     from google import genai
     key = _gemini_api_key()
     if not key:
         raise RuntimeError("No Gemini API key configured.")
     cfg    = _load_config()
-    chain  = _model_chain(cfg, "gemini_models", "gemini_model", preferred, _load_models("gemini", _EMERGENCY_GEMINI))
+    chain  = only or _model_chain(cfg, "gemini_models", "gemini_model", preferred, _load_models("gemini", _EMERGENCY_GEMINI))
     client = genai.Client(api_key=key)
 
     last_err: Exception | None = None
@@ -241,6 +241,17 @@ class TextModel:
             except Exception as e:
                 print(f"[TextModel] Groq chain exhausted ({e}) — falling back to Gemini")
         return _Response(_gemini_generate(contents, self._gemini_model))
+
+
+def generate_bulk(prompt: str) -> str:
+    """For bulk background jobs (core/routing_trainer): only the Gemma models
+    (14,400 req/day each). Never falls through to the Flash-tier or Groq
+    models live actions depend on — when Gemma is rate-limited this raises
+    and the caller backs off instead of eating those daily quotas."""
+    gemma = [m for m in _load_models("gemini", _EMERGENCY_GEMINI) if m.startswith("gemma")]
+    if not gemma:
+        raise RuntimeError("No Gemma model configured for bulk jobs.")
+    return _gemini_generate(prompt, None, only=gemma)
 
 
 def get_text_model(gemini_model: str | None = None, groq_model: str | None = None) -> TextModel:

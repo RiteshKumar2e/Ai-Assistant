@@ -283,7 +283,7 @@ def open_app(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
-    "description": "Opens any application on the computer. Use this whenever the user asks to open, launch, or start any app, website, or program. Always call this tool — never just say you opened it.",
+    "description": "Opens/launches an installed desktop application or program (Spotify, WhatsApp, Notepad, Calculator, VS Code, Word, Excel, Settings, Edge). Use for 'Spotify kholo', 'open calculator', 'notepad chalu karo'. NOT for websites or URLs (youtube.com, chatgpt, gmail, any site) — those are browser_control go_to. NOT for a folder (open_folder). Always call this tool — never just say you opened it.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

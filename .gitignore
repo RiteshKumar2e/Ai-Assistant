@@ -27,6 +27,8 @@ config/whatsapp_web/
 
 # ── Personal data the assistant accumulates about you ─────────────────────────
 memory/long_term.json
+memory/self_training.json
+memory/routing_training.json
 memory/*.db
 # Task agent: your workspace paths, contacts and deploy settings, and its
 # runtime data (task state, generated Claude Code prompts)

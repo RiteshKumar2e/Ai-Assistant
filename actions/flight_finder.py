@@ -351,7 +351,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "flight_finder",
-    "description": "Searches Google Flights and speaks the best options.",
+    "description": "Finds flights between two cities on a date via Google Flights and speaks the best options with prices: 'Delhi se Mumbai flight 5 October', 'cheapest flight to Goa next Friday'. Trains/buses/hotels are web_search.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

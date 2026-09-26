@@ -605,7 +605,7 @@ def dev_agent(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "dev_agent",
-    "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
+    "description": "Builds a NEW complete multi-file project from scratch (website, app, API, game, bot): plans, writes files, installs deps, opens VS Code, runs and fixes errors. Use for 'ek todo app bana do', 'build me a flask API project', 'React website banao'. A single script is code_helper; changing/fixing an EXISTING project is agent_task.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

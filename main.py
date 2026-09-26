@@ -58,6 +58,7 @@ from memory.memory_manager import (
 )
 from memory import self_training
 from core.self_trainer import SelfTrainer
+from core import routing_trainer
 
 # The file-backed tools (open_app, web_search, browser_control, …) are no longer
 # imported or declared here — they self-describe via a TOOL dict in their own
@@ -849,6 +850,9 @@ class JudoLive:
         lessons_str = self_training.format_lessons_for_prompt()
         if lessons_str:
             parts.append(lessons_str)
+        routing_str = routing_trainer.format_routing_lessons()
+        if routing_str:
+            parts.append(routing_str)
         parts.append(sys_prompt)
 
         cfg = dict(

@@ -234,6 +234,24 @@ It is held in memory only, deliberately: writing it to disk would make a fresh l
 
 ---
 
+## 🎯 Routing Exam — 20,000 commands JUDO trains on
+
+JUDO understands you by picking the right tool for what you said. To make that reliable it sits a fixed exam of **20,000 spoken commands** (English, Hinglish and Hindi) with a known right answer each, covering every tool — `core/training_corpus.py`.
+
+- **Every wrong pick is a lesson.** `core/routing_trainer.py` records each confusion ("wanted `media_control`, picked `computer_settings`") with example phrasings. The most frequent ones go into the live voice prompt as `[ROUTING LESSONS]`, so the same phrasing does not fool it twice.
+- **Mistakes are re-tested.** Wrong items come back in later batches; once they pass, the lesson fades out by itself.
+- **It keeps practising while you're idle.** The idle self-trainer works through the exam 50 commands at a time, alongside its coding drills.
+- **Nothing is executed.** The exam only asks "which tool would you pick" — it never opens, sends or deletes anything.
+- **Quota-safe.** It uses only the Gemma models (14,400 requests/day) and backs off when rate-limited, so it never eats the quota JUDO's live actions need.
+
+```
+python -m core.routing_trainer              # run the whole exam now (resumable)
+python -m core.routing_trainer --status     # accuracy, weakest tools, current lessons
+python -m core.routing_trainer --reset      # start over
+```
+
+Turn background practice off with `"self_training_enabled": false` in `config/api_keys.json`.
+
 ## 🗺️ RITESH Roadmap
 
 Each release is named **RITESH \<roman numeral\>** — the version column below is that numeral.

@@ -269,7 +269,7 @@ def web_search(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "web_search",
-    "description": "Searches the web. Use for ANY question about current facts, events, prices, or topics — always prefer this over guessing. Modes: 'search' (default), 'news' (latest headlines on a topic), 'research' (deep comprehensive answer), 'price' (product cost lookup), 'compare' (side-by-side comparison of items).",
+    "description": "Searches the web and SPEAKS the answer back. Use for ANY question about current facts, events, scores, prices, or topics ('aaj ki news', 'iPhone 17 ki price kya hai', 'who won the match') — always prefer this over guessing. If the user wants to SEE a site or search results page in the browser, that is browser_control. Modes: 'search' (default), 'news' (latest headlines on a topic), 'research' (deep comprehensive answer), 'price' (product cost lookup), 'compare' (side-by-side comparison of items).",
     "parameters": {
         "type": "OBJECT",
         "properties": {

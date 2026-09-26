@@ -53,7 +53,7 @@ def _log(message: str, player=None) -> None:
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "weather_report",
-    "description": "Gives the weather report to user",
+    "description": "Current weather and forecast for a city: temperature, rain, humidity. Use for 'aaj mausam kaisa hai', 'will it rain in Delhi tomorrow', 'weather in Mumbai'. Leave city empty for the user's own city.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

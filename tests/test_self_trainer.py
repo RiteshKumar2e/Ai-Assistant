@@ -22,6 +22,7 @@ _REAL_SYSTEM_OVERLOADED = st_mod._system_overloaded
 @pytest.fixture(autouse=True)
 def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "STORE_PATH", tmp_path / "self_training.json")
+    monkeypatch.setattr(st_mod.routing_trainer, "STATE_PATH", tmp_path / "routing_training.json")
 
 
 @pytest.fixture(autouse=True)
@@ -264,20 +265,22 @@ def test_run_drill_never_raises_on_model_failure(monkeypatch, isolated_config):
         raise ConnectionError("network is down")
 
     monkeypatch.setattr(st_mod, "_ask", boom)
+    monkeypatch.setattr(st_mod.routing_trainer, "_ask", boom)
     trainer = st_mod.SelfTrainer()
-    result = trainer.run_drill(TOOLS)   # must not raise
-    assert result == ""
+    for rotation in range(3):
+        trainer._rotation = rotation
+        assert trainer.run_drill(TOOLS) == ""   # must not raise
 
 
-def test_run_drill_alternates_routing_and_coding(monkeypatch, isolated_config):
+def test_run_drill_rotates_exam_routing_and_coding(monkeypatch, isolated_config):
     calls = []
     trainer = st_mod.SelfTrainer()
+    monkeypatch.setattr(trainer, "_exam_drill", lambda tools: calls.append("exam") or "e")
     monkeypatch.setattr(trainer, "_routing_drill", lambda tools: calls.append("routing") or "r")
     monkeypatch.setattr(trainer, "_coding_drill", lambda: calls.append("coding") or "c")
 
-    trainer._rotation = 0
-    trainer.run_drill(TOOLS)
-    trainer._rotation = 1
-    trainer.run_drill(TOOLS)
+    for rotation in range(4):
+        trainer._rotation = rotation
+        trainer.run_drill(TOOLS)
 
-    assert calls == ["routing", "coding"]
+    assert calls == ["exam", "routing", "coding", "exam"]

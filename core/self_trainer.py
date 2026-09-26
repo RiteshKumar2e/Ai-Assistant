@@ -16,6 +16,10 @@ itself an exam it already knows the answer to:
                   user has not hit yet — logged as an understanding mistake,
                   which rides in the next session's system prompt.
 
+  EXAM BATCH      The next 50 commands of the fixed 20,000-command routing
+                  exam (core/training_corpus + core/routing_trainer). Wrong
+                  picks become [ROUTING LESSONS] in the live prompt.
+
   CODING DRILL    Invent a small task, generate code for it through the same
                   prompt shape code_helper uses (its own past lessons
                   included), then compile-check the result. A SyntaxError is
@@ -43,6 +47,7 @@ import sys
 import time
 from pathlib import Path
 
+from core import routing_trainer
 from memory import self_training
 
 _LANGUAGES = ["Hindi (Devanagari)", "Hinglish (Hindi written in Latin script)", "English"]
@@ -118,12 +123,22 @@ class SelfTrainer:
         drill could not run (no API key, model unreachable) — never raises, a
         failed practice session must not disturb a running assistant."""
         try:
-            if self._rotation % 2 == 0 and tool_decls:
+            slot = self._rotation % 3
+            if slot == 0 and tool_decls:
+                return self._exam_drill(tool_decls)
+            if slot == 1 and tool_decls:
                 return self._routing_drill(tool_decls)
             return self._coding_drill()
         except Exception as e:
             print(f"[SelfTrainer] drill skipped: {e}")
             return ""
+
+    # ── Exam batch ───────────────────────────────────────────────────────────
+
+    def _exam_drill(self, tool_decls: list[dict]) -> str:
+        r = routing_trainer.run_batch(tool_decls)
+        return (f"exam batch {r['ok']}/{r['total']} — {r['seen']:,} routed so far, "
+                f"{r['correct'] / max(1, r['seen']):.1%} overall")
 
     # ── Routing drill ────────────────────────────────────────────────────────
 
