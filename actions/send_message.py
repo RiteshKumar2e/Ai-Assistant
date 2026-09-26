@@ -115,10 +115,11 @@ def _open_app(app_name: str) -> bool:
 
 
 def _open_browser_url(url: str) -> bool:
-    import webbrowser
+    from actions.browser_control import open_in_browser   # JUDO's browser (Edge), never the system default
     try:
-        webbrowser.open(url)
-        time.sleep(4.0) 
+        if not open_in_browser(url):
+            raise RuntimeError("no browser executable found")
+        time.sleep(4.0)
         return True
     except Exception as e:
         print(f"[SendMessage] ⚠️ Could not open browser: {e}")

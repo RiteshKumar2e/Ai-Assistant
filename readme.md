@@ -83,6 +83,30 @@ It's not just an assistant — it's an extension of your digital life.
 
 ---
 
+## 🤖 Task Agent — tell it the goal, it does the steps
+
+Say *"open my AI Assistant project, find why login fails, fix it, run the tests, commit and push"*.
+JUDO hands this to its task agent. A supervisor plans the work, picks only the agents it needs
+(Computer, Coding, Testing, Git, GitHub, Research, File/Document, Browser, Messaging, Email,
+Calendar, Deployment) and runs a plan → act → observe → verify loop, while you keep talking.
+
+* **Remembers the task:** "fix it", "push it", "this PDF" refer to the current project, issue or attached file.
+* **Keeps you posted:** short spoken milestones, plus a live **AGENT** box on the HUD.
+* **Asks only when it must:** pushes, messages, emails, invites, deploys and deletions wait for your
+  HUD button. The check is enforced below the model.
+* **Never fakes a result:** the report's *Verified* list comes from real tool results — tests passed,
+  commit sha, push checked on the remote, message id from the provider.
+* **Claude Code:** it can prepare a precise, repo-grounded Claude Code prompt with **COPY PROMPT**,
+  or run the `claude` CLI locally when you enable it.
+* **Text mode:** the same agent runs without voice: `python -m agent "…"`.
+
+Docs: [architecture](docs/ARCHITECTURE.md) · [agents & tools](docs/AGENTS.md) ·
+[integrations & setup](docs/INTEGRATIONS.md). Optional integrations (Telegram/Slack/Discord/WhatsApp
+Cloud, Gmail/Outlook, Google Calendar, Vercel/Render, MCP servers) are configured in
+`config/api_keys.json` and `config/agent.json`. Anything not connected says so instead of pretending.
+
+---
+
 ## 🆕 What's New in RITESH LIII
 
 RITESH LIII is about making JUDO **hands-free, faster, and easy to extend** — all universal: no hardcoded language, no bundled asset files, works the same on Windows, macOS and Linux.
@@ -108,7 +132,7 @@ A single Gemini API key means the assistant goes down the moment its free-tier q
 Languages with grammatical gender (e.g. self-referring verb/adjective agreement) need to know whose gender is being expressed. JUDO now reads a configured gender for both the user and the assistant's own voice, and uses that to keep self-reference and address grammatically correct instead of defaulting to one gender for everyone.
 
 ### 🌐 Real-browser automation
-`browser_control` used to open simple "go to this site" requests in the real, already-open browser but fall back to a second, separate, signed-out automation profile the moment an interactive action (click/type) was needed — so a flow like "open ChatGPT and ask it X" could end up typing into a browser window that was never logged in anywhere. It now drives the user's actual already-open Chrome/Edge/Brave/Vivaldi/Opera via the Chrome DevTools Protocol for every action, including plain navigation — one browser, real profile, no second window. If that browser is currently running without remote debugging enabled, it is restarted once on the same profile (cookies/history/extensions untouched) so it can be attached to; after that it's reused as-is.
+`browser_control` used to open simple "go to this site" requests in the real, already-open browser but fall back to a second, separate, signed-out automation profile the moment an interactive action (click/type) was needed — so a flow like "open ChatGPT and ask it X" could end up typing into a browser window that was never logged in anywhere. It now drives the user's actual already-open Chrome/Edge/Brave/Vivaldi/Opera via the Chrome DevTools Protocol for every action, including plain navigation — one browser, real profile, no second window. JUDO **never closes, kills or restarts your browser**: websites open as new tabs in the window you already have open. Clicking, typing and reading inside a page work when the browser was started with remote debugging; otherwise JUDO says so instead of restarting it (Chrome 136+ also ignores the debug flag on your normal profile, so a restart could never have worked there anyway).
 
 > Built on the RITESH LI/LII foundation: the **🧩 Plugin System**, **♾️ Unlimited Sessions**, **🎨 Live Theming**, **〰️ Reactive HUD** and **🎙️ Voice Picker** are all still here.
 

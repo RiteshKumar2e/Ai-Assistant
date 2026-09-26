@@ -65,6 +65,9 @@ def _get_api_key() -> str:
 
 def _open_url(url: str) -> None:
     try:
+        from actions.browser_control import open_in_browser   # JUDO's browser (Edge), never the system default
+        if open_in_browser(url):
+            return
         if is_mac():
             subprocess.Popen(["open", url])
         elif is_linux():

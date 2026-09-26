@@ -53,6 +53,7 @@ class _Pending:
     detail:  str
     run:     Callable[[], str]
     at:      float
+    on_cancel: Optional[Callable[[], None]] = None
 
 
 _pending: Optional[_Pending] = None
@@ -79,8 +80,21 @@ def _log(msg: str) -> None:
             pass
 
 
-def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
+def _cancelled(p: Optional[_Pending]) -> None:
+    if p and p.on_cancel:
+        try:
+            p.on_cancel()
+        except Exception as e:
+            _log(f"ERR: cancel hook for {p.title} failed — {e}")
+
+
+def request(key: str, title: str, detail: str, run: Callable[[], str],
+            on_cancel: Optional[Callable[[], None]] = None) -> str:
     """Park an irreversible action behind the on-screen gate.
+
+    `on_cancel` (optional) fires when the user presses CANCEL, the request
+    expires, or a newer request replaces it — so a caller blocked waiting on
+    the answer (agent/orchestration) stops waiting instead of timing out.
 
     Returns the sentence the tool should hand back to the model — phrased as an
     instruction so the assistant asks the user out loud in their own language,
@@ -94,14 +108,16 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
                 f"not available, so I have not done it.")
 
     with _lock:
-        _pending = _Pending(key=key, title=title, detail=detail,
-                            run=run, at=time.monotonic())
+        replaced, _pending = _pending, _Pending(key=key, title=title, detail=detail,
+                                                run=run, at=time.monotonic(), on_cancel=on_cancel)
+    _cancelled(replaced)
 
     try:
         _show_cb(title, detail)
     except Exception as e:
         with _lock:
             _pending = None
+        _cancelled(_Pending(key, title, detail, run, 0.0, on_cancel))
         return f"Could not ask for confirmation: {e}. Nothing was done."
 
     _log(f"SYS: Awaiting confirmation — {title}")
@@ -134,10 +150,12 @@ def resolve(accepted: bool) -> None:
 
     if time.monotonic() - p.at > TIMEOUT_SECONDS:
         _log(f"SYS: Confirmation expired — {p.title}")
+        _cancelled(p)
         return
 
     if not accepted:
         _log(f"SYS: Cancelled — {p.title}")
+        _cancelled(p)
         return
 
     def _worker():

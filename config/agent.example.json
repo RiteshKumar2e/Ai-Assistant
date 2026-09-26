@@ -1,0 +1,36 @@
+{
+  "_readme": [
+    "Copy to config/agent.json (gitignored) and edit. Every field is optional — delete what you don't need.",
+    "No secrets here: all keys live in config/api_keys.json (see api_keys.example.json). See docs/INTEGRATIONS.md."
+  ],
+
+  "confirmation_mode": "balanced",
+  "_confirmation_mode": "strict = confirm every change · balanced = confirm external/destructive (default) · trusted = confirm destructive + flagged pushes only",
+
+  "workspaces": ["C:/Users/<you>/Projects", "D:/Projects"],
+  "_workspaces": "Folders the agent may work in freely. Empty/missing → Desktop, ~/Projects, ~/source/repos … that exist.",
+
+  "max_iterations": 30,
+  "task_timeout_s": 1200,
+  "command_timeout_s": 300,
+  "protected_branches": ["main", "master", "production", "release"],
+  "expected_remote": "",
+
+  "claude_code": {"mode": "copy", "cli": "claude", "permission_mode": "acceptEdits", "timeout_s": 1800},
+  "_claude_code": "mode 'copy' = prompt + Copy button (always works). mode 'local' = also run it with the `claude` CLI when it is on PATH.",
+
+  "contacts": {
+    "Rahul": {"telegram": "123456789", "slack": "U0123ABCD", "whatsapp": "+919876543210", "discord": "TEAM", "email": "rahul@example.com"}
+  },
+
+  "email_provider": "",
+  "calendar_provider": "",
+
+  "deploy": {"provider": "", "allow_production": false, "render_service_id": ""},
+
+  "decision_provider": {},
+  "_decision_provider": "Optional fast model for routing/next-action JSON, any OpenAI-compatible endpoint, e.g. {\"base_url\": \"http://localhost:11434/v1\", \"model\": \"qwen2.5:7b\"} — its key, if any, goes in api_keys.json as decision_api_key",
+
+  "mcp_servers": [],
+  "_mcp_servers": "e.g. [{\"name\": \"docs\", \"command\": \"npx\", \"args\": [\"-y\", \"@some/mcp-server\"], \"description\": \"…\", \"risk\": \"read\"}]"
+}

@@ -4,5 +4,16 @@
     "groq_model": "llama-3.3-70b-versatile",
     "os_system": "windows",
     "assistant_name": "Judo",
-    "user_name": "YOUR_GROQ_API_KEY_HERE"
+    "user_name": "YOUR_GROQ_API_KEY_HERE",
+
+    "_optional_agent_integrations": "Everything below is optional — leave empty or delete. See docs/INTEGRATIONS.md.",
+    "telegram_bot_token": "",
+    "slack_bot_token": "",
+    "discord_webhooks": {"TEAM": ""},
+    "whatsapp_token": "",
+    "whatsapp_phone_number_id": "",
+    "outlook_client_id": "",
+    "vercel_token": "",
+    "render_api_key": "",
+    "decision_api_key": ""
 }

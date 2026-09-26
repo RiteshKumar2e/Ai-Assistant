@@ -9,7 +9,6 @@ import platform
 import shutil
 import subprocess
 import threading
-import time
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -24,6 +23,7 @@ from playwright.async_api import (
 )
 
 from core import user_paths
+from actions import _uia_browser as uia
 
 _OS = platform.system()   # "Windows" | "Darwin" | "Linux"
 
@@ -63,60 +63,6 @@ def _user_agent() -> str:
         "Chrome/124.0.0.0 Safari/537.36"
     )
 
-
-def _real_profile_dir(browser: str) -> str:
-    home  = Path.home()
-    local = os.environ.get("LOCALAPPDATA", "")
-    roam  = os.environ.get("APPDATA", "")
-
-    candidates: list[Path] = []
-
-    if _OS == "Windows":
-        m = {
-            "chrome":   [Path(local) / "Google"          / "Chrome"          / "User Data"],
-            "edge":     [Path(local) / "Microsoft"        / "Edge"            / "User Data"],
-            "brave":    [Path(local) / "BraveSoftware"    / "Brave-Browser"   / "User Data"],
-            "vivaldi":  [Path(local) / "Vivaldi"          / "User Data"],
-            "opera":    [Path(roam)  / "Opera Software"   / "Opera Stable",
-                         Path(local) / "Opera Software"   / "Opera Stable"],
-            "operagx":  [Path(roam)  / "Opera Software"   / "Opera GX Stable",
-                         Path(local) / "Opera Software"   / "Opera GX Stable"],
-        }
-        candidates = m.get(browser, [])
-
-    elif _OS == "Darwin":
-        lib = home / "Library" / "Application Support"
-        m = {
-            "chrome":   [lib / "Google"             / "Chrome"],
-            "edge":     [lib / "Microsoft Edge"],
-            "brave":    [lib / "BraveSoftware"       / "Brave-Browser"],
-            "vivaldi":  [lib / "Vivaldi"],
-            "opera":    [lib / "com.operasoftware.Opera"],
-            "operagx":  [lib / "com.operasoftware.OperaGX"],
-        }
-        candidates = m.get(browser, [])
-
-    elif _OS == "Linux":
-        cfg = home / ".config"
-        m = {
-            "chrome":   [cfg / "google-chrome", cfg / "chromium"],
-            "edge":     [cfg / "microsoft-edge"],
-            "brave":    [cfg / "BraveSoftware" / "Brave-Browser"],
-            "vivaldi":  [cfg / "vivaldi"],
-            "opera":    [cfg / "opera"],
-            "operagx":  [cfg / "opera-gx"],
-        }
-        candidates = m.get(browser, [])
-
-    for p in candidates:
-        if p.exists():
-            print(f"[Browser] ✅ Real profile found for {browser}: {p}")
-            return str(p)
-
-    fallback = home / ".judo_profiles" / browser
-    fallback.mkdir(parents=True, exist_ok=True)
-    print(f"[Browser] ⚠️  Real profile not found for {browser}, using: {fallback}")
-    return str(fallback)
 
 def _firefox_profile_dir() -> Optional[str]:
     home = Path.home()
@@ -351,6 +297,28 @@ def _detect_default_browser() -> str:
     return "chrome"
 
 
+def _preferred_browser() -> str:
+    """The browser JUDO uses when the user doesn't name one. The user asked for
+    Edge (ChatGPT and everything else there; Chrome left alone), so Edge wins
+    whenever it is installed. Override with "browser" in config/api_keys.json."""
+    try:
+        cfg = json.loads((Path(__file__).resolve().parent.parent / "config" / "api_keys.json").read_text(encoding="utf-8"))
+        choice = str(cfg.get("browser", "")).lower().strip()
+        if choice:
+            return _ALIASES.get(choice, choice)
+    except Exception:
+        pass
+    return "edge" if _resolve_exe_path("edge") else _detect_default_browser()
+
+
+def open_in_browser(url: str) -> bool:
+    """Open a URL in JUDO's browser (Edge by default) as a tab in its open window —
+    for actions that just need to show a page. Never closes or restarts anything."""
+    name = _preferred_browser()
+    exe = _resolve_exe_path(name)
+    return bool(exe) and _open_in_running(exe, _normalize_url(url))
+
+
 _SEARCH_ENGINES: dict[str, str] = {
     "google":     "https://www.google.com/search?q=",
     "bing":       "https://www.bing.com/search?q=",
@@ -387,16 +355,6 @@ _CDP_PORTS: dict[str, int] = {
     "vivaldi": 9225, "opera": 9226, "operagx": 9227,
 }
 
-_PROCESS_IMAGE: dict[str, dict[str, str]] = {
-    "Windows": {"chrome": "chrome.exe", "edge": "msedge.exe", "brave": "brave.exe",
-                "vivaldi": "vivaldi.exe", "opera": "opera.exe", "operagx": "opera.exe"},
-    "Darwin":  {"chrome": "Google Chrome", "edge": "Microsoft Edge", "brave": "Brave Browser",
-                "vivaldi": "Vivaldi", "opera": "Opera", "operagx": "Opera"},
-    "Linux":   {"chrome": "chrome", "edge": "msedge", "brave": "brave",
-                "vivaldi": "vivaldi", "opera": "opera", "operagx": "opera"},
-}
-
-
 def _cdp_alive(port: int) -> bool:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1.5):
@@ -405,69 +363,38 @@ def _cdp_alive(port: int) -> bool:
         return False
 
 
-def _wait_for_cdp(port: int, timeout: float = 20.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _cdp_alive(port):
-            return True
-        time.sleep(0.3)
-    return False
+# ── The user's browser is never closed, killed or restarted by JUDO ──────────
+# This module used to force-kill a Chromium browser that was running without
+# remote debugging and relaunch it with the debug flag. That force-kill is a
+# crash as far as the browser is concerned (the profile is left marked
+# "Crashed", the open window disappears, and it can come back on a different
+# profile), and on Chrome 136+ it could not even work: Chrome ignores
+# --remote-debugging-port on the default user-data dir. So it is gone for good.
+# Navigation opens tabs in the window that is already open (_open_in_running);
+# page interaction attaches only when the browser is ALREADY debuggable.
+_NO_AUTOMATION = (
+    "{name} is open without automation access, and I never close or restart your browser to get it. "
+    "I can open pages in it as new tabs (go_to / search / new_tab), but I can't click, type or read inside a page "
+    "(Windows UI Automation of the open window was not available either). To allow that, start {name} yourself "
+    "with remote debugging (e.g. a separate profile: {name} --remote-debugging-port={port} --user-data-dir=<folder>)."
+)
 
 
-def _is_running(browser_name: str) -> bool:
-    image = _PROCESS_IMAGE.get(_OS, {}).get(browser_name)
-    if not image:
+class _NoAutomation(RuntimeError):
+    """The browser has no CDP port and JUDO won't restart it to get one — the
+    dispatcher then drives the open window through UI Automation instead."""
+
+
+def _open_in_running(exe: str, url: str) -> bool:
+    """`<browser> <url>` while the browser is running hands the URL to that same
+    instance as a new tab (single-instance lock) — nothing is closed or
+    restarted. If it isn't running, this simply starts it, like its icon would."""
+    try:
+        subprocess.Popen([exe, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception as e:
+        print(f"[Browser] Could not hand {url} to {exe}: {e}")
         return False
-    try:
-        if _OS == "Windows":
-            out = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=5,
-            ).stdout
-            return image.lower() in out.lower()
-        out = subprocess.run(["pgrep", "-f", image], capture_output=True, text=True, timeout=5)
-        return out.returncode == 0
-    except Exception:
-        return False
-
-
-def _terminate(browser_name: str) -> None:
-    image = _PROCESS_IMAGE.get(_OS, {}).get(browser_name)
-    if not image:
-        return
-    try:
-        if _OS == "Windows":
-            subprocess.run(["taskkill", "/IM", image, "/F"], capture_output=True, timeout=10)
-        else:
-            subprocess.run(["pkill", "-f", image], capture_output=True, timeout=10)
-    except Exception:
-        pass
-
-
-def _clear_stale_profile_state(profile_dir: str) -> None:
-    """After taskkill /F, the profile is left in the same state as a crash:
-    Singleton* lock files still reference the now-dead PID, and Chrome marks
-    the profile as 'exited uncleanly'. On relaunch that can either confuse the
-    new process (rare hang while it evaluates the stale lock) or pop the
-    'Chrome didn't shut down correctly — Restore pages?' prompt, which sits
-    there waiting for a click no one is going to make — both show up here as
-    "did not open its debug port in time". Best-effort and non-fatal: if any
-    step fails, relaunch proceeds exactly as before this existed."""
-    root = Path(profile_dir)
-    for lock in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-        try:
-            (root / lock).unlink(missing_ok=True)
-        except Exception:
-            pass
-    try:
-        prefs_path = root / "Default" / "Preferences"
-        prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
-        profile = prefs.setdefault("profile", {})
-        profile["exit_type"]      = "Normal"
-        profile["exited_cleanly"] = True
-        prefs_path.write_text(json.dumps(prefs), encoding="utf-8")
-    except Exception:
-        pass
 
 
 def _resolve_exe_path(name: str) -> Optional[str]:
@@ -530,15 +457,6 @@ class _BrowserSession:
         # recovery, or a JUDO hiccup would slam the user's whole browser shut.
         self._cdp_browser: Browser | None = None
 
-        # Monotonic time of the last kill+restart this session attempted.
-        # Without tracking this, a slow relaunch (e.g. --restore-last-session
-        # bringing back a large real tab set) that times out waiting for CDP
-        # gets treated as "not running" by the NEXT action and killed and
-        # relaunched all over again — leaving the first attempt's Chrome
-        # process orphaned in the background and making every subsequent
-        # attempt start from a heavier, more loaded machine than the last.
-        self._last_relaunch_attempt = 0.0
-
     def start(self):
         if self._thread and self._thread.is_alive():
             return
@@ -585,15 +503,11 @@ class _BrowserSession:
             asyncio.run_coroutine_threadsafe(self._async_close(), self._loop).result(10)
 
     async def _async_close(self):
-        # Explicit close: if we're attached to the user's real browser via
-        # CDP, actually close it (that's what "close chrome" means); a
-        # Playwright-launched context (Firefox/Safari) closes the same way.
-        if self._cdp_browser is not None:
-            try:
-                await self._cdp_browser.close()
-            except Exception:
-                pass
-        elif self._context:
+        # Attached to the user's real browser over CDP: only DISCONNECT (stopping
+        # Playwright below drops the connection). Never close it — that is the
+        # user's own window with their tabs. A context Playwright itself launched
+        # (Firefox/Safari automation profile) is JUDO's to close.
+        if self._cdp_browser is None and self._context:
             try:
                 await self._context.close()
             except Exception:
@@ -677,97 +591,15 @@ class _BrowserSession:
         port  = _CDP_PORTS.get(self.browser_name, 9222)
         label = f"{self.browser_name}" + (f" @ {exe}" if exe else "")
 
-        # 1) Already debuggable — either JUDO started it earlier this machine
-        #    session, or the user launched it with the flag themselves.
-        #    Attach and reuse exactly what's already open, no restart at all.
+        # 1) Already debuggable (the user started it with the flag): attach and
+        #    reuse exactly what's open.
         if _cdp_alive(port):
             await self._attach_cdp(port, label)
             return
 
-        # 1.5) We ourselves killed and relaunched this browser recently and it
-        #      is still running (didn't crash) but CDP isn't up yet — this is
-        #      almost certainly that SAME relaunch still warming up (loading
-        #      extensions, restoring the previous session's tabs), not a new
-        #      problem. Give it more time instead of killing an in-progress
-        #      startup and launching yet another Chrome process on top of it.
-        since_last_attempt = time.monotonic() - self._last_relaunch_attempt
-        if since_last_attempt < 90 and _is_running(self.browser_name):
-            print(f"[Browser] {self.browser_name} is still starting up from a "
-                  f"relaunch {since_last_attempt:.0f}s ago — waiting instead of "
-                  f"restarting it again.")
-            if _wait_for_cdp(port, timeout=25.0):
-                await self._attach_cdp(port, label)
-                return
-            raise RuntimeError(
-                f"{self.browser_name} is still starting up (system may be under "
-                f"heavy load) — please try again in a moment."
-            )
-
-        # 2) Same browser is running WITHOUT debugging enabled. Chromium only
-        #    reads --remote-debugging-port at startup, and its single-instance
-        #    lock means a second launch just hands its args to that existing
-        #    window and exits — so the only way in is to restart it once, on
-        #    the SAME real profile (tabs restore, cookies/history/extensions
-        #    are untouched) rather than opening a separate blank profile.
-        if _is_running(self.browser_name):
-            print(f"[Browser] {self.browser_name} is already running without "
-                  f"remote debugging enabled — restarting it once on the SAME "
-                  f"profile (cookies/history/extensions/logins are untouched; "
-                  f"open tabs restore only if 'Continue where you left off' is "
-                  f"enabled in {self.browser_name}'s settings) so automation "
-                  f"controls your actual browser instead of a separate one. "
-                  f"This only happens the first time per session.")
-            _terminate(self.browser_name)
-            for _ in range(20):
-                if not _is_running(self.browser_name):
-                    break
-                await asyncio.sleep(0.25)
-
-        exe = exe or _resolve_exe_path(self.browser_name)
-        if not exe:
-            raise RuntimeError(f"Could not locate an executable for {self.browser_name}.")
-
-        profile = _real_profile_dir(self.browser_name)
-        # A taskkill /F above (or any earlier crash) leaves the profile marked
-        # 'exited uncleanly' with stale Singleton* lock files still pointing at
-        # the dead PID — left alone, the relaunch can either sit stuck on that
-        # stale lock or pop a 'Restore pages?' prompt nobody is there to click,
-        # both surfacing as "did not open its debug port in time" below.
-        _clear_stale_profile_state(profile)
-        # Recorded BEFORE the slow part so the very next call — if it lands
-        # while this one is still opening its debug port — hits the grace
-        # path above instead of killing this process it just started.
-        self._last_relaunch_attempt = time.monotonic()
-        subprocess.Popen(
-            [exe,
-             f"--remote-debugging-port={port}",
-             f"--user-data-dir={profile}",
-             "--no-first-run",
-             # Force the previous tabs back regardless of the user's own
-             # "on startup" setting — without this, a profile that isn't set
-             # to "Continue where you left off" reopens to a blank new-tab
-             # page after the restart above, i.e. every open tab looks like
-             # it just vanished. --restore-last-session reads the same
-             # continuously-autosaved session data Chrome's own crash-restore
-             # infobar would have used — pairing it with the exit_type/
-             # exited_cleanly patch above means tabs come back WITHOUT that
-             # infobar ever popping up asking someone to click it.
-             "--restore-last-session",
-             "--disable-default-apps",
-             "--no-default-browser-check"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-
-        # Raised from 30s to 40s after this fired twice in real use with
-        # --restore-last-session bringing back a real, many-tab profile under
-        # heavy system load. A timeout here no longer means the next action
-        # kills and restarts again from scratch — see the grace path above,
-        # which now gives an in-progress startup like this one more time
-        # instead of compounding it with a second Chrome process.
-        if not _wait_for_cdp(port, timeout=40.0):
-            raise RuntimeError(f"{self.browser_name} did not open its debug port in time.")
-
-        await self._attach_cdp(port, label)
+        # 2) Not debuggable — whether it is running or not, JUDO never kills,
+        #    restarts or relaunches the user's browser to get automation access.
+        raise _NoAutomation(_NO_AUTOMATION.format(name=self.browser_name.capitalize(), port=port))
 
     async def _attach_cdp(self, port: int, label: str) -> None:
         """Connects to the user's real, already-running browser over CDP and
@@ -821,24 +653,14 @@ class _BrowserSession:
 
         url = _normalize_url(url)
 
-        # Not already attached, and this is a Chromium browser with no CDP
-        # session up — don't force-restart the user's already-open window
-        # just to load a URL. Chrome's own single-instance lock means
-        # launching `chrome.exe <url>` while it's already running silently
-        # hands the URL to that SAME window as a new tab: no restart, no
-        # debug port touched, nothing closed. (If the browser isn't running
-        # at all, this just opens it fresh, same as double-clicking its
-        # icon.) Only actions that actually need to click/type/read the page
-        # (see click/type/screenshot below) pay the one-time CDP-restart cost.
+        # Not attached and no CDP session up: hand the URL to the browser that
+        # is already open, as a new tab in its window (_open_in_running) —
+        # nothing is closed or restarted.
         if (self._context is None and self._spec and self._spec["engine"] == "chromium"
                 and not _cdp_alive(_CDP_PORTS.get(self.browser_name, 9222))):
             exe = self._spec["exe"] or _resolve_exe_path(self.browser_name)
-            if exe:
-                try:
-                    subprocess.Popen([exe, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    return f"Opened: {url}"
-                except Exception as e:
-                    print(f"[Browser] Native open failed ({e}) — falling back to automated launch")
+            if exe and _open_in_running(exe, url):
+                return f"Opened in a new tab of your open {self.browser_name}: {url}"
 
         page     = await self._get_page()
         prev_url = page.url
@@ -1034,11 +856,30 @@ class _BrowserSession:
         # and defeat that.
         if url:
             return await self.go_to(url)
+        if (self._context is None and self._spec and self._spec["engine"] == "chromium"
+                and not _cdp_alive(_CDP_PORTS.get(self.browser_name, 9222))):
+            exe = self._spec["exe"] or _resolve_exe_path(self.browser_name)
+            if exe and _open_in_running(exe, "chrome://newtab/"):
+                return f"New tab opened in your open {self.browser_name}."
         page = await self._get_page()
         ctx  = page.context
         new  = await ctx.new_page()
         self._page = new
         return "New tab opened."
+
+    async def switch_tab(self, target: str) -> str:
+        t = (target or "").lower().strip()
+        await self._launch()
+        for p in self._context.pages:
+            try:
+                title = await p.title()
+            except Exception:
+                continue
+            if t and (t in title.lower() or t in p.url.lower()):
+                await p.bring_to_front()
+                self._page = p
+                return f"Switched to your open tab: {title}"
+        return f"Could not find an open tab matching '{target}'."
 
     async def close_tab(self) -> str:
         page = self._page
@@ -1127,7 +968,7 @@ class _SessionRegistry:
 
     def get(self, browser_name: str | None = None) -> _BrowserSession:
         if not browser_name:
-            browser_name = self._active_browser or _detect_default_browser()
+            browser_name = self._active_browser or _preferred_browser()
         browser_name = _ALIASES.get(browser_name.lower().strip(), browser_name.lower().strip())
         sess = self._get_or_create(browser_name)
         self._active_browser = browser_name
@@ -1222,6 +1063,16 @@ def browser_control(
         _log(player, result)
         return result
 
+    no_cdp = bool(sess._spec and sess._spec.get("engine") == "chromium"
+                  and not _cdp_alive(_CDP_PORTS.get(sess.browser_name, 9222)))
+
+    # "Open ChatGPT" while a ChatGPT tab is already open → use that tab, don't add another.
+    if action in ("go_to", "new_tab") and no_cdp and params.get("url"):
+        switched = uia.switch_to_site(sess.browser_name, _normalize_url(params["url"]))
+        if switched:
+            _log(player, switched)
+            return switched
+
     if action in ("go_to", "search", "new_tab"):
         try:
             if action == "search":
@@ -1268,16 +1119,39 @@ def browser_control(
             result = sess.run(sess.forward())
         elif action == "reload":
             result = sess.run(sess.reload())
+        elif action == "switch_tab":
+            result = sess.run(sess.switch_tab(params.get("target") or params.get("text", "")))
         else:
             result = f"Unknown browser action: '{action}'"
 
     except concurrent.futures.TimeoutError:
         result = f"Browser action '{action}' timed out (60s)."
+    except _NoAutomation as e:
+        result = _drive_open_window(sess.browser_name, action, params) or str(e)
     except Exception as e:
         result = f"Browser error ({action}): {e}"
 
     _log(player, result)
     return result
+
+
+def _drive_open_window(browser: str, action: str, p: dict) -> str | None:
+    """No CDP: do the action on the user's open window via UI Automation.
+    None → UIA can't do this action / isn't available (caller reports why)."""
+    text = p.get("text", "") or ""
+    if action == "switch_tab":
+        return uia.switch_tab(browser, p.get("target") or text)
+    if action in ("type", "smart_type"):
+        return uia.type_text(browser, text, p.get("description", "") or "")
+    if action in ("click", "smart_click"):
+        return uia.click(browser, p.get("description") or text or "")
+    if action == "press":
+        return uia.press(browser, p.get("key", "Enter"))
+    if action == "get_text":
+        return uia.get_text(browser)
+    if action == "get_url":
+        return uia.get_url(browser)
+    return None
 
 
 def _log(player, text: str):
@@ -1290,13 +1164,13 @@ def _log(player, text: str):
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "browser_control",
-    "description": "Controls any web browser. Use for: opening websites, searching the web, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Every action — including plain go_to/search — runs in the user's own already-open browser (real profile, logged-in accounts, extensions); it never opens a second, separate, logged-out browser window. If that browser is running without automation support enabled, it is restarted once on the same profile (tabs restore) so it can be driven directly; after that it's reused as-is. Always pass the 'browser' parameter when the user specifies a browser (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
+    "description": "Controls any web browser. Use for: opening websites, searching the web, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Every action — including plain go_to/search — runs in the user's own already-open browser (real profile, logged-in accounts, extensions); it never opens a second, separate, logged-out browser window, and it NEVER closes, kills or restarts the user's browser. go_to/search/new_tab open as new tabs in the window that is already open. go_to a site that already has an open tab (e.g. chatgpt.com) switches to that tab. switch_tab (target = words from the tab title, e.g. 'ChatGPT') brings an open tab to the front. Typing, clicking, pressing keys and reading the page work on the open window (UI Automation on Windows when the browser has no debug port); if an action can't be done the tool says so — report that honestly, never retry by closing the browser. JUDO's browser is Microsoft Edge: leave 'browser' empty to use it (ChatGPT, GitHub, everything). Only pass 'browser' when the user explicitly names a different one (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "go_to | search | click | type | scroll | fill_form | smart_click | smart_type | get_text | get_url | press | new_tab | close_tab | screenshot | back | forward | reload | switch | list_browsers | close | close_all"
+                "description": "go_to | search | click | type | scroll | fill_form | smart_click | smart_type | get_text | get_url | press | new_tab | switch_tab | close_tab | screenshot | back | forward | reload | switch | list_browsers | close | close_all"
             },
             "browser": {
                 "type": "STRING",
@@ -1337,6 +1211,10 @@ TOOL = {
             "key": {
                 "type": "STRING",
                 "description": "Key name for press action (e.g. Enter, Escape, F5)"
+            },
+            "target": {
+                "type": "STRING",
+                "description": "switch_tab: words from the open tab's title or site, e.g. 'ChatGPT'"
             },
             "path": {
                 "type": "STRING",

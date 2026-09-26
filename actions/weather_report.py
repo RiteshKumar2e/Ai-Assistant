@@ -1,4 +1,3 @@
-import webbrowser
 from urllib.parse import quote_plus
 
 
@@ -22,9 +21,9 @@ def weather_action(
     url           = f"https://www.google.com/search?q={quote_plus(search_query)}"
 
     try:
-        opened = webbrowser.open(url)
-        if not opened:
-            raise RuntimeError("webbrowser.open returned False")
+        from actions.browser_control import open_in_browser   # JUDO's browser (Edge), never the system default
+        if not open_in_browser(url):
+            raise RuntimeError("no browser executable found")
     except Exception as e:
         msg = f"Sir, I couldn't open the browser for the weather report: {e}"
         _log(msg, player)

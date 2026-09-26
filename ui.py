@@ -2791,6 +2791,8 @@ class MainWindow(QMainWindow):
     _confirm_sig    = pyqtSignal(str, str)   # (title, detail) — irreversible-action gate
     _confirm_hide_sig = pyqtSignal()
     _wake_dl_sig    = pyqtSignal(bool, str)  # wake-word install finished (ok, message)
+    _agent_sig      = pyqtSignal(dict)       # agent task event (agent/events.py Event.to_dict())
+    _card_sig       = pyqtSignal(str, str, str, str)  # Claude Code card: (title, text, repo, prompt_path)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -2828,6 +2830,10 @@ class MainWindow(QMainWindow):
         self.on_wake_toggle    = None   # callable: (enable: bool) -> str, set by JudoLive
         self.on_wake_manual    = None   # callable: () -> None — manual sleep/wake
         self.wake_get_state    = None   # callable: () -> dict {enabled, awake, ready}
+        self.get_integrations  = None   # callable: () -> str, agent integration status, set by the agent_task action
+        self._agent_lines: list[str] = []
+        self._card: tuple[str, str, str] = ("", "", "")   # (text, repo, prompt_path) of the task card on screen
+        self._suppress_clip    = False  # our own COPY PROMPT must not pop the clipboard panel
         self._muted            = False
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
@@ -2936,6 +2942,8 @@ class MainWindow(QMainWindow):
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
         self._content_sig.connect(self._show_content)
+        self._agent_sig.connect(self._on_agent_event)
+        self._card_sig.connect(self._show_task_card)
         self._reconfig_sig.connect(self._show_setup)
         self._camera_sig.connect(self._show_camera_frame)
         self._confirm_sig.connect(self._show_confirm_banner)
@@ -3636,6 +3644,8 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
             return l
 
+        lay.addWidget(self._build_agent_box())
+
         lay.addWidget(_sec("ACTIVITY LOG"))
         self._log = LogWidget()
         lay.addWidget(self._log, stretch=1)
@@ -3690,6 +3700,83 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._mute_btn)
 
         return w
+
+    def _build_agent_box(self) -> QWidget:
+        """Task agent status: state, current agent, last steps. Driven only by real
+        agent events (agent/events.py) — nothing here is inferred or animated."""
+        box = QWidget()
+        box.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;")
+        v = QVBoxLayout(box); v.setContentsMargins(7, 5, 7, 6); v.setSpacing(2)
+        hdr = QHBoxLayout(); hdr.setSpacing(4)
+        t = QLabel("◈ AGENT")
+        t.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        t.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none;")
+        hdr.addWidget(t)
+        self._agent_state_lbl = QLabel("IDLE")
+        self._agent_state_lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._agent_state_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
+        hdr.addWidget(self._agent_state_lbl); hdr.addStretch()
+        integ = QPushButton("INTEGRATIONS")
+        integ.setFont(QFont("Courier New", 6)); integ.setFixedHeight(15)
+        integ.setCursor(Qt.CursorShape.PointingHandCursor)
+        integ.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_DIM}; border: 1px solid {C.BORDER}; border-radius: 2px; padding: 0 4px; }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        """)
+        integ.clicked.connect(self._show_integrations)
+        hdr.addWidget(integ)
+        v.addLayout(hdr)
+        self._agent_name_lbl = QLabel("")
+        self._agent_name_lbl.setFont(QFont("Courier New", 7))
+        self._agent_name_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
+        self._agent_name_lbl.hide()
+        v.addWidget(self._agent_name_lbl)
+        self._agent_steps_lbl = QLabel("No task running.")
+        self._agent_steps_lbl.setFont(QFont("Courier New", 7))
+        self._agent_steps_lbl.setWordWrap(True)
+        self._agent_steps_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self._agent_steps_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
+        v.addWidget(self._agent_steps_lbl)
+        return box
+
+    def _on_agent_event(self, ev: dict):
+        """Slot (Qt thread). Maps agent events onto the AGENT box."""
+        t, msg, agent, status = ev.get("type"), ev.get("message", ""), ev.get("agent", ""), ev.get("status", "")
+        states = {"task_started": ("● WORKING", C.PRI), "confirmation_required": ("⚠ CONFIRM ON HUD", C.ACC2),
+                  "clarification_needed": ("? NEEDS YOU", C.ACC2)}
+        if t == "task_started":
+            self._agent_lines = [f"● {msg[:90]}"]
+        elif t == "agent_started":
+            self._agent_name_lbl.setText(agent.replace("Agent", " Agent")); self._agent_name_lbl.show()
+            if self._agent_state_lbl.text() != "● WORKING":
+                states[t] = ("● WORKING", C.PRI)
+        elif t == "tool_completed":
+            self._agent_lines.append(("✓ " if ev.get("data", {}).get("ok") else "✗ ") + msg[2:92])
+        elif t == "agent_status":
+            self._agent_lines.append(f"● {msg[:90]}")
+        elif t == "error":
+            self._agent_lines.append(f"✗ {msg[:90]}")
+        elif t == "task_completed":
+            done = {"completed": ("✓ DONE", C.GREEN), "failed": ("✗ FAILED", C.RED), "cancelled": ("■ CANCELLED", C.TEXT_DIM),
+                    "waiting_input": ("? NEEDS YOU", C.ACC2)}
+            states[t] = done.get(status, ("✓ DONE", C.GREEN))
+            self._agent_name_lbl.hide()
+        if t in states:
+            txt, col = states[t]
+            self._agent_state_lbl.setText(txt)
+            self._agent_state_lbl.setStyleSheet(f"color: {col}; background: transparent; border: none;")
+        self._agent_lines = self._agent_lines[-7:]
+        if self._agent_lines:
+            self._agent_steps_lbl.setText("\n".join(self._agent_lines))
+
+    def _show_integrations(self):
+        text = "Integration status is available once the agent has started (say or type a task)."
+        if callable(self.get_integrations):
+            try:
+                text = self.get_integrations()
+            except Exception as e:
+                text = f"Could not read integration status: {e}"
+        self._show_content("INTEGRATIONS", text)
 
     def _build_quick_drawer(self) -> QWidget:
         """Floating overlay panel shown when the ⚙ header button is toggled."""
@@ -3921,6 +4008,19 @@ class MainWindow(QMainWindow):
         self._content_ts_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         hdr.addWidget(self._content_ts_lbl)
 
+        def _card_btn(label, slot):
+            b = QPushButton(label)
+            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold)); b.setFixedHeight(18)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(f"""
+                QPushButton {{ background: {C.PRI_GHO}; color: {C.PRI}; border: 1px solid {C.PRI_DIM}; border-radius: 2px; padding: 0 6px; }}
+                QPushButton:hover {{ color: {C.WHITE}; border-color: {C.PRI}; }}
+            """)
+            b.clicked.connect(slot); b.hide(); hdr.addWidget(b)
+            return b
+        self._copy_btn = _card_btn("COPY PROMPT", self._copy_card)
+        self._open_code_btn = _card_btn("OPEN IN VS CODE", self._open_card_in_code)
+
         dismiss = QPushButton("DISMISS  ✕")
         dismiss.setFont(QFont("Courier New", 7))
         dismiss.setFixedHeight(18)
@@ -3971,9 +4071,34 @@ class MainWindow(QMainWindow):
 
         return w
 
+    def _show_task_card(self, title: str, text: str, repo: str, prompt_path: str):
+        """Slot — a Claude Code task: content panel plus COPY PROMPT / OPEN IN VS CODE."""
+        self._show_content(title, text)
+        self._card = (text, repo, prompt_path)
+        self._copy_btn.setText("COPY PROMPT")
+        self._copy_btn.show()
+        self._open_code_btn.setVisible(bool(repo or prompt_path))
+
+    def _copy_card(self):
+        self._suppress_clip = True
+        QApplication.clipboard().setText(self._card[0])
+        self._copy_btn.setText("COPIED ✓")
+        self._log.append_log("SYS: Claude Code prompt copied — paste it into Claude Code.")
+
+    def _open_card_in_code(self):
+        _, repo, prompt_path = self._card
+        try:
+            from agent.tools.vscode import CodeCLI
+            args = [a for a in (repo, prompt_path) if a]
+            r = CodeCLI()._launch(*args)
+            self._log.append_log(("SYS: " if r.ok else "ERR: ") + r.output)
+        except Exception as e:
+            self._log.append_log(f"ERR: Could not open VS Code — {e}")
+
     def _show_content(self, title: str, text: str):
         """Slot — runs on Qt main thread. Updates and shows the content panel."""
         import time as _time
+        self._copy_btn.hide(); self._open_code_btn.hide()
         self._content_title_lbl.setText(title.upper()[:48])
         self._content_ts_lbl.setText(_time.strftime("%H:%M:%S"))
         self._content_display.setPlainText(text)
@@ -4468,6 +4593,9 @@ class MainWindow(QMainWindow):
     # ── Clipboard intelligence ───────────────────────────────────────────────────
 
     def _on_clipboard_changed(self):
+        if self._suppress_clip:
+            self._suppress_clip = False
+            return
         try:
             text = QApplication.clipboard().text().strip()
             if len(text) >= 10:
@@ -4736,6 +4864,22 @@ class JudoUI:
     def show_content(self, title: str, text: str):
         """Thread-safe: display content in the panel below the HUD."""
         self._win._content_sig.emit(title[:48], text[:4000])
+
+    def show_task_card(self, title: str, text: str, repo: str = "", prompt_path: str = "") -> None:
+        """Thread-safe: content panel with COPY PROMPT / OPEN IN VS CODE (Claude Code tasks)."""
+        self._win._card_sig.emit(title[:48], text[:20000], repo or "", prompt_path or "")
+
+    def agent_event(self, ev: dict) -> None:
+        """Thread-safe: feed one agent event (agent/events.py) to the AGENT box."""
+        self._win._agent_sig.emit(dict(ev))
+
+    @property
+    def get_integrations(self):
+        return self._win.get_integrations
+
+    @get_integrations.setter
+    def get_integrations(self, cb):
+        self._win.get_integrations = cb
 
     def prompt_reconfig(self):
         """Thread-safe: show the API key setup overlay (e.g. after an auth error)."""

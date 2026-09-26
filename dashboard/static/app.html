@@ -220,6 +220,8 @@
       if (m.type === 'wake')          sys('Wake word detected — connecting…');
       if (m.type === 'sys')           sys(m.text);
       if (m.type === 'file_received') _onFileReceived(m);
+      if (m.type === 'agent_event' && m.event && !['tool_started', 'agent_completed'].includes(m.event.type))
+        sys((m.event.type === 'tool_completed' ? '' : '● ') + m.event.message);
     };
 
     function setStatus(s) {

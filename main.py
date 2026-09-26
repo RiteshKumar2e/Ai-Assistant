@@ -149,6 +149,31 @@ def _load_system_prompt() -> str:
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
 
+_LANG_CODES = {
+    "hindi": "hi-IN", "hinglish": "hi-IN", "english": "en-IN", "bengali": "bn-IN", "bangla": "bn-IN", "tamil": "ta-IN",
+    "telugu": "te-IN", "marathi": "mr-IN", "gujarati": "gu-IN", "kannada": "kn-IN", "malayalam": "ml-IN", "punjabi": "pa-IN",
+    "urdu": "ur-IN", "odia": "or-IN", "nepali": "ne-NP", "turkish": "tr-TR", "spanish": "es-ES", "french": "fr-FR",
+    "german": "de-DE", "italian": "it-IT", "portuguese": "pt-BR", "russian": "ru-RU", "arabic": "ar-SA",
+    "japanese": "ja-JP", "korean": "ko-KR", "chinese": "zh-CN", "mandarin": "zh-CN", "indonesian": "id-ID",
+}
+
+
+def _speech_language_codes(memory: dict) -> list[str]:
+    """BCP-47 hints for input transcription. `speech_languages` in api_keys.json
+    wins; else the language JUDO remembered about the user; else Hindi (the same
+    starting default as the morning briefing). English always rides along, since
+    mixed Hindi-English is the normal case."""
+    try:
+        custom = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8")).get("speech_languages")
+        if isinstance(custom, list) and custom:
+            return [str(c) for c in custom][:4]
+    except Exception:
+        pass
+    e = memory.get("identity", {}).get("language", {})
+    lang = (e.get("value", "") if isinstance(e, dict) else str(e or "")).strip().lower()
+    codes = [c for word, c in _LANG_CODES.items() if word in lang] or ["hi-IN"]
+    return list(dict.fromkeys(codes + ["en-IN"]))[:4]
+
 def _clean_transcript(text: str) -> str:    
     text = _CTRL_RE.sub("", text)
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
@@ -424,6 +449,7 @@ class JudoLive:
         self._self_trainer     = SelfTrainer()     # practises routing/coding while the user is idle
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
+        self._stt_hints     = True  # transcription language hints; auto-disabled if the server rejects them
 
         _base_dir = Path(__file__).resolve().parent
         _inline_names = {t["name"] for t in TOOL_DECLARATIONS}
@@ -828,7 +854,12 @@ class JudoLive:
         cfg = dict(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
-            input_audio_transcription={},
+            # Without a hint the recogniser guesses the language per utterance and
+            # Hindi/Hinglish speech could come back in Japanese script ("シャコ で て ん").
+            input_audio_transcription=(
+                types.AudioTranscriptionConfig(language_codes=_speech_language_codes(memory))
+                if self._stt_hints else {}
+            ),
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": (
                 TOOL_DECLARATIONS
@@ -1733,6 +1764,12 @@ class JudoLive:
             asyncio.create_task(self._dashboard.serve())
             # Runs for the whole lifetime, not just inside an active session
             asyncio.create_task(self._process_dashboard_commands())
+            # Live task stream: agent events (already redacted, no reasoning) → phone, as
+            # {"type": "agent_event", "event": {type, message, agent, status, task_id, …}}.
+            from actions import agent_task as _agent_task
+            _dash, _loop = self._dashboard, self._loop
+            _agent_task.event_sinks.append(lambda ev: asyncio.run_coroutine_threadsafe(
+                _dash.broadcast({"type": "agent_event", "event": ev}), _loop))
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
@@ -1888,6 +1925,16 @@ class JudoLive:
                         f"SYS: {msg} — retrying in {self._conn_backoff}s."
                         + ("" if total > 1 else " Add more keys in Settings to avoid this.")
                     )
+
+                # Transcription language hints rejected (older/preview server) —
+                # fall back to auto-detect rather than failing to connect. Checked
+                # first when the error names them; otherwise only once proactive
+                # audio (the other optional field) has already been ruled out.
+                _bad_arg = "INVALID_ARGUMENT" in err_str or "Unknown name" in err_str or "unexpected keyword" in err_str
+                if self._stt_hints and _bad_arg and ("language" in err_str.lower() or not self._enhanced_live):
+                    self._stt_hints = False
+                    self.ui.write_log("SYS: Speech language hints unavailable — using auto-detect.")
+                    continue
 
                 # Proactive audio rejected by the server (preview API drift) —
                 # drop it and reconnect with the plain config.
