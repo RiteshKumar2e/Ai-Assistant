@@ -779,6 +779,11 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
         return "No file path provided."
 
     path = Path(file_path_str)
+    if not path.exists() and not path.is_absolute():
+        # A bare name ("invoice.pdf") is what people say out loud — look for it
+        # the way file_controller does (Desktop, or a leading Downloads/Documents).
+        from actions.file_controller import _resolve_path
+        path = _resolve_path(file_path_str)
     if not path.exists():
         return f"File not found: {file_path_str}"
     if not path.is_file():

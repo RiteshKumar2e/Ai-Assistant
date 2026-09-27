@@ -113,13 +113,26 @@ def _read() -> dict:
 
 
 def _write(s: dict) -> None:
-    try:
-        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = STATE_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(STATE_PATH)
-    except OSError as e:
-        print(f"[RoutingTrainer] could not save progress: {e}")
+    """Atomic replace, retried: on Windows the replace fails while anything —
+    another thread, `--status` in a second window, JUDO reading its lessons —
+    has the file open, and a dropped write silently loses a batch."""
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_PATH.with_suffix(".tmp")
+    for attempt in range(20):
+        try:
+            tmp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(STATE_PATH)
+            return
+        except PermissionError:
+            time.sleep(0.05 * (attempt + 1))
+        except OSError:
+            break
+    print(f"[RoutingTrainer] could not save progress to {STATE_PATH.name}")
+
+
+def _locked_read() -> dict:
+    with _lock:
+        return _read()
 
 
 def reset() -> None:
@@ -219,17 +232,30 @@ def _args_error(expected: dict, got: dict) -> str | None:
 
 
 def _is_correct(expected: str, got: str) -> bool:
-    if got in training_corpus.EQUIVALENT.get(expected, ()):
+    eq = training_corpus.EQUIVALENT.get(expected, ())
+    if got in eq or got.split(".")[0] in eq:
         return True
     e_tool, _, e_act = expected.partition(".")
     g_tool, _, g_act = got.partition(".")
     return e_tool == g_tool and (not e_act or e_act == g_act)
 
 
+def effective_label(got: str, got_args: dict) -> str:
+    """The action that would really run. computer_settings with no action but
+    a description is resolved locally by the tool itself
+    (actions/computer_settings._detect_action) — grade what would happen."""
+    if got == "computer_settings" and got_args.get("description"):
+        from actions.computer_settings import _detect_action
+        act = _detect_action(str(got_args["description"])).get("action")
+        return f"computer_settings.{act}" if act else got
+    return got
+
+
 def grade(expected: str, want_args: dict, command: str, got: str, got_args: dict,
           execute: bool = True) -> tuple[bool, str | None, str]:
     """(passed, failure key, detail). Keys: "exp|got" wrong tool,
     "exp|args:param" wrong detail, "exp|exec" the real run failed."""
+    got = effective_label(got, got_args)
     if not _is_correct(expected, got):
         return False, f"{expected}|{got}", ""
     exact = got.split(".")[0] == expected.split(".")[0]
@@ -286,6 +312,12 @@ def _parse(reply: str, n: int) -> dict[int, tuple[str, dict]]:
     return picks
 
 
+def _now_line() -> str:
+    """The live session tells the model the date and time (main.py time_ctx);
+    without it "2 ghante baad" can only be guessed as some date in 2023."""
+    return f"Current date and time: {datetime.now():%A, %Y-%m-%d %H:%M}.\n"
+
+
 def _ask(prompt: str) -> str:
     from core.text_model import generate_bulk
     return generate_bulk(prompt)
@@ -328,6 +360,7 @@ def _route(decls: list[dict], batch: list[int]) -> dict:
     numbered = "\n".join(f"{i}. {items[k][0]}" for i, k in enumerate(batch, 1))
     reply = _ask(
         "You are the tool router of JUDO, a Hindi/Hinglish/English voice assistant on Windows.\n"
+        + _now_line() +
         f"Available tools:\n{_catalogue(decls)}\n"
         "- none: no tool — small talk, thanks, greetings, jokes, or general knowledge you can answer yourself.\n\n"
         f"{lessons}\n"
@@ -511,7 +544,7 @@ def train(limit: int | None = None, size: int = BATCH_SIZE, workers: int = 1, lo
     where it stopped."""
     from concurrent.futures import ThreadPoolExecutor
     decls = load_tool_decls()
-    start_round = _read()["round"]
+    start_round = _locked_read()["round"]
     target = limit or 10 ** 9
     progress = {"done": 0, "claimed": 0}
     plock = Lock()
@@ -521,7 +554,7 @@ def train(limit: int | None = None, size: int = BATCH_SIZE, workers: int = 1, lo
         while True:
             with plock:
                 n = min(size, target - progress["claimed"])
-                if n <= 0 or (not limit and _read()["round"] > start_round):
+                if n <= 0 or (not limit and _locked_read()["round"] > start_round):
                     return
                 progress["claimed"] += n
             try:
@@ -551,7 +584,7 @@ def train(limit: int | None = None, size: int = BATCH_SIZE, workers: int = 1, lo
             fails = 0
             with plock:
                 progress["done"] += r["total"]
-                goal = f"{target:,}" if limit else f"pass {_read()['cursor']:,}/{len(corpus()):,}"
+                goal = f"{target:,}" if limit else f"pass {_locked_read()['cursor']:,}/{len(corpus()):,}"
                 log(f"[RoutingTrainer] {progress['done']:,} tasks ({goal})  batch {r['ok']}/{r['total']}  "
                     f"overall {r['correct'] / max(1, r['seen']):.1%}  round {r['round']}")
 

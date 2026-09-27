@@ -337,3 +337,34 @@ def test_seed_exam_and_merged_lessons(tmp_path, monkeypatch):
         assert 'app_name "Notion"' in lessons
     finally:
         rt.use_exam("core")
+
+
+def test_sandbox_reads_real_pdf_and_word_text():
+    for name in ("invoice.pdf", "report.docx"):
+        ok, detail = sb.run("file_controller", "read", {"path": name}, {})
+        assert ok and detail == f"JUDO sandbox file {name}"
+
+
+def test_move_to_where_it_already_is_says_so():
+    ok, detail = sb.run("file_controller", "move", {"path": "report.docx", "destination": "Desktop"}, {})
+    assert ok and "already in" in detail
+
+
+def test_reminder_takes_time_left_inside_the_message():
+    assert sb.run("reminder", "", {"message": "drink water in 30 minutes"}, {})[0]
+    assert not sb.run("reminder", "", {"message": "drink water"}, {})[0]
+
+
+def test_computer_settings_description_graded_by_what_would_run():
+    assert rt.grade("computer_settings.toggle_wifi", {}, "c", "computer_settings", {"description": "wifi off"})[0]
+    assert not rt.grade("computer_settings.restart", {}, "c", "computer_settings", {"description": "wifi off"})[0]
+    assert rt.grade("file_controller.read", {"path|name": "a.pdf"}, "c", "file_processor.extract_text", {})[0]
+
+
+@pytest.mark.parametrize("said,action", [
+    ("save karo", "save"), ("ctrl s dabao", "save"), ("awaaz badhao", "volume_up"), ("volume kam karo", "volume_down"),
+    ("awaaz band karo", "mute"), ("PC lock kar do", "lock_screen"), ("laptop restart kar do", "restart"),
+])
+def test_hinglish_descriptions_resolve(said, action):
+    from actions.computer_settings import _detect_action
+    assert _detect_action(said)["action"] == action

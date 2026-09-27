@@ -76,6 +76,39 @@ def should_run(tool: str, action: str, args: dict, command: str) -> bool:
 _KINDS = ("desktop", "downloads", "documents", "pictures", "music", "videos")
 
 
+def _sample_file(path: Path, text: str) -> None:
+    """A real file of its type where that matters for reading it: a genuine
+    one-page PDF and Word document, so "invoice.pdf padho" is tested against
+    real text extraction, not a text file with a .pdf name."""
+    if path.suffix == ".docx":
+        try:
+            from docx import Document
+            doc = Document()
+            doc.add_paragraph(text)
+            doc.save(str(path))
+            return
+        except ImportError:
+            pass
+    if path.suffix == ".pdf":
+        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+                b"/Resources << /Font << /F1 5 0 R >> >> >>",
+                b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+                b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+        out, offsets = bytearray(b"%PDF-1.4\n"), []
+        for i, body in enumerate(objs, 1):
+            offsets.append(len(out))
+            out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+        xref = len(out)
+        out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+        out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+        out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+        path.write_bytes(bytes(out))
+        return
+    path.write_text(text + "\n", encoding="utf-8")
+
+
 @contextmanager
 def _file_sandbox():
     import actions.file_controller as fc
@@ -85,7 +118,7 @@ def _file_sandbox():
         d.mkdir()
         (d / "inside.txt").write_text("JUDO sandbox\n", encoding="utf-8")
     for name in training_corpus.S["file"]:
-        (dirs["desktop"] / name).write_text(f"JUDO sandbox file {name}\n", encoding="utf-8")
+        _sample_file(dirs["desktop"] / name, f"JUDO sandbox file {name}")
     for name in training_corpus.S["folder"]:
         if name.lower() not in _KINDS:
             (dirs["desktop"] / name).mkdir(exist_ok=True)
@@ -131,6 +164,8 @@ def _run_file(action: str, args: dict) -> tuple[bool, str]:
             return False, result
         if action in ("create_folder", "create_file"):
             return target().exists(), result
+        if action == "move" and "already in" in low:
+            return True, result   # it is already where they want it — the honest answer
         if action in ("delete", "rename", "move"):
             if not existed:
                 return False, f"source not found: {before.name} — {result}"

@@ -298,7 +298,11 @@ def reminder(
     message  = parameters.get("message", "Reminder").strip()
 
     if not time_str:
-        return "I need a time to set a reminder."
+        # The model sometimes leaves the time inside the message ("drink water
+        # in 30 minutes"). Take it from there rather than refuse.
+        if natural_date.parse_when("", message) is None:
+            return "I need a time to set a reminder."
+        time_str = message
 
     # The model often passes the user's own words ("10 minutes", "2 ghante
     # baad", "kal", "shaam 4 baje") instead of YYYY-MM-DD / HH:MM — read those

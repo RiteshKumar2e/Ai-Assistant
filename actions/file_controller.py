@@ -291,6 +291,13 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
 
         if dst.is_dir():
             dst = dst / src.name
+        # "Desktop pe daal do" for a file already on the Desktop used to answer
+        # "Moved" with nothing moved; a same-named file at the destination
+        # would be overwritten on some systems. Say what is actually true.
+        if dst.resolve() == src.resolve():
+            return f"{src.name} is already in {dst.parent.name}/ — nothing to move."
+        if dst.exists():
+            return f"{dst.parent.name}/ already has a file named {dst.name} — not overwriting it."
 
         dst.parent.mkdir(parents=True, exist_ok=True)
         origin = src.resolve()
@@ -388,6 +395,27 @@ def rename_file(path: str, name: str = "", new_name: str = "") -> str:
         return f"Could not rename: {e}"
 
 
+def _document_text(target: Path) -> str:
+    """The readable text of a file. PDFs and Word files used to be read as
+    raw bytes — "invoice.pdf padho" answered with binary noise."""
+    ext = target.suffix.lower()
+    if ext == ".pdf":
+        try:
+            import PyPDF2
+            with target.open("rb") as f:
+                text = "\n".join((pg.extract_text() or "") for pg in PyPDF2.PdfReader(f).pages).strip()
+            return text or "This PDF has no text layer (it may be a scanned image)."
+        except ImportError:
+            return "Reading PDFs needs PyPDF2: pip install PyPDF2"
+    if ext == ".docx":
+        try:
+            from docx import Document
+            return "\n".join(p.text for p in Document(str(target)).paragraphs)
+        except ImportError:
+            return "Reading Word files needs python-docx: pip install python-docx"
+    return target.read_text(encoding="utf-8", errors="ignore")
+
+
 def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
     try:
         base   = _resolve_path(path)
@@ -399,7 +427,7 @@ def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
         if not target.is_file():
             return f"Not a file: {target.name}"
 
-        content = target.read_text(encoding="utf-8", errors="ignore")
+        content = _document_text(target)
         if len(content) > max_chars:
             content = content[:max_chars] + f"\n\n[Truncated — {len(content)} total chars]"
         return content

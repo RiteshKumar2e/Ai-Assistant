@@ -705,15 +705,20 @@ _DANGEROUS_ACTIONS = set(_IRREVERSIBLE)
 # out in full. What is left is spelling tolerance, and difflib does that in
 # microseconds instead of ~600 ms and a quota unit.
 _ALIASES = {
-    "volume_up":       ("louder", "raise volume", "turn it up", "increase volume"),
-    "volume_down":     ("quieter", "lower volume", "turn it down", "decrease volume"),
-    "mute":            ("silence", "sound off", "no sound"),
-    "brightness_up":   ("brighter", "raise brightness", "increase brightness"),
-    "brightness_down": ("dimmer", "dim", "lower brightness", "decrease brightness"),
+    # Hinglish phrasings found by the task exam (core/routing_trainer) sit next
+    # to the English ones — the live model passes the user's own words here.
+    "volume_up":       ("louder", "raise volume", "turn it up", "increase volume", "awaaz badha",
+                        "awaz badha", "volume badha", "awaaz tez", "sound badha"),
+    "volume_down":     ("quieter", "lower volume", "turn it down", "decrease volume", "awaaz kam",
+                        "awaz kam", "volume kam", "awaaz dheemi", "sound kam"),
+    "mute":            ("silence", "sound off", "no sound", "awaaz band", "awaz band", "volume band"),
+    "save":            ("save file", "save this", "save it", "save karo", "save kar", "ctrl s", "ctrl+s"),
+    "brightness_up":   ("brighter", "raise brightness", "increase brightness", "brightness badha"),
+    "brightness_down": ("dimmer", "dim", "lower brightness", "decrease brightness", "brightness kam"),
     "close_window":    ("close this", "close it"),
     "full_screen":     ("fullscreen", "maximise screen"),
     "show_desktop":    ("minimise everything", "go to desktop"),
-    "lock_screen":     ("lock", "lock the pc", "lock computer"),
+    "lock_screen":     ("lock", "lock the pc", "lock computer", "lock kar"),
     "sleep_display":   ("screen off", "turn off the screen", "display off"),
     "dark_mode":       ("night mode", "light mode", "toggle theme"),
     "toggle_wifi":     ("wifi", "wi-fi", "internet off", "internet on"),
@@ -721,8 +726,9 @@ _ALIASES = {
     "screenshot":      ("capture screen", "take a screenshot", "snip"),
     "refresh_page":    ("refresh", "reload page"),
     "new_tab":         ("open a tab", "open new tab"),
-    "shutdown":        ("power off", "turn off the computer", "switch off the pc"),
-    "restart":         ("reboot", "restart the pc"),
+    "shutdown":        ("power off", "turn off the computer", "switch off the pc", "pc band", "laptop band",
+                        "computer band"),
+    "restart":         ("reboot", "restart the pc", "restart kar"),
 }
 
 _VALUE_ACTIONS = {"volume_set", "type_text", "press_key", "reload_n",

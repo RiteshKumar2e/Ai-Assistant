@@ -249,6 +249,7 @@ EQUIVALENT = {
     "desktop_control.organize": {"file_controller.organize_desktop", "desktop_control.clean"},
     "file_controller.list": {"desktop_control.list"},
     "desktop_control.wallpaper": {"desktop_control.task"},
+    "file_controller.read": {"file_processor"},   # a bare tool name = any of its actions
 }
 
 # What a correct call must CONTAIN, per label: {param: expected}. A param may

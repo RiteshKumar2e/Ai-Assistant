@@ -232,6 +232,7 @@ def verify(cands: list[dict], provider: str, model: str, decls: list[dict]) -> l
     numbered = "\n".join(f"{i}. {c['cmd']}" for i, c in enumerate(cands, 1))
     reply = _ask(provider, model, (
         "You are the tool router of JUDO, a Hindi/Hinglish/English voice assistant on Windows.\n"
+        + rt._now_line() +
         f"Tools:\n{_compact_catalogue(decls)}\n"
         "- none: no tool — small talk, thanks, jokes, or general knowledge answered directly.\n\n"
         "For EACH numbered command, one line: the number, the tool (with `.action` when it has an "
@@ -245,7 +246,7 @@ def verify(cands: list[dict], provider: str, model: str, decls: list[dict]) -> l
         if i not in picks:
             continue
         got_label, got_args = picks[i]
-        if not rt._is_correct(c["label"], got_label):
+        if not rt._is_correct(c["label"], rt.effective_label(got_label, got_args)):
             continue
         # A detail survives only if both models gave the same value for it.
         agreed = {}
@@ -271,9 +272,15 @@ def _labels() -> list[str]:
     return list(tc.T)
 
 
+_dry: Counter = Counter()   # label -> consecutive attempts that kept nothing
+
+
 def _next_label(counts: Counter, target: int) -> str | None:
+    """The thinnest label — but one that keeps yielding nothing (the two model
+    families never agree on it) is set aside after 3 tries, instead of being
+    picked forever and starving every other label."""
     share = target / len(_labels())
-    open_ = [l for l in _labels() if counts[l] < share]
+    open_ = [l for l in _labels() if counts[l] < share and _dry[l] < 3]
     return min(open_, key=lambda l: (counts[l], random.random())) if open_ else None
 
 
@@ -301,6 +308,8 @@ def step(decls_list: list[dict], counts: Counter, target: int) -> tuple[int, str
         k.update(gen=gen[1], ver=ver[1], style=style[:40])
     added = _append(kept)
     counts[label] += added
+    with _lock:
+        _dry[label] = 0 if added else _dry[label] + 1
     return added, f"{label} [{style[:28]}] {gen[1]}→{ver[1]}: {len(cands)} written, {len(kept)} agreed, {added} new"
 
 
