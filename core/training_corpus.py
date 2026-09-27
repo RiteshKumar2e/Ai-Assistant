@@ -250,6 +250,10 @@ EQUIVALENT = {
     "file_controller.list": {"desktop_control.list"},
     "desktop_control.wallpaper": {"desktop_control.task"},
     "file_controller.read": {"file_processor"},   # a bare tool name = any of its actions
+    "computer_settings.task_manager": {"open_app"},              # open_app("Task Manager") opens it too
+    "computer_settings.refresh_page": {"browser_control.reload"},
+    "computer_settings.switch_window": {"computer_control.hotkey"},
+    "computer_settings.zoom_in": {"computer_control.hotkey"},
 }
 
 # What a correct call must CONTAIN, per label: {param: expected}. A param may

@@ -78,3 +78,12 @@ def test_spec_numbers_exact_text_loose():
 def test_key_args_keep_only_graded_details_and_join_split_paths():
     assert sg._key_args("computer_settings.full_screen", {"description": "awaaz", "value": "on"}) == {}
     assert sg._key_args("file_controller.copy", {"path": "C:/Downloads", "name": "movie.mp4", "destination": "D:/"}) ==         {"path|name": "C:/Downloads movie.mp4", "destination": "D:/"}
+
+
+def test_parallel_workers_spread_over_labels_and_dry_labels_are_skipped(monkeypatch):
+    from collections import Counter
+    monkeypatch.setattr(sg, "_labels", lambda: ["a", "b", "c"])
+    monkeypatch.setattr(sg, "_busy", Counter())
+    monkeypatch.setattr(sg, "_dry", Counter({"c": 3}))
+    picks = {sg._next_label(Counter(), 300) for _ in range(2)}
+    assert picks == {"a", "b"}          # second worker avoids the label already in flight; dry "c" never picked

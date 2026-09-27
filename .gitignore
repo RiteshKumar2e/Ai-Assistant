@@ -31,6 +31,8 @@ memory/self_training.json
 memory/routing_training.json
 memory/seed_training.json
 memory/seed_tasks.jsonl
+memory/seed.log
+memory/seed.err.log
 memory/*.db
 # Task agent: your workspace paths, contacts and deploy settings, and its
 # runtime data (task state, generated Claude Code prompts)

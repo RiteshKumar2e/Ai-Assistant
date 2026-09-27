@@ -272,7 +272,8 @@ def _labels() -> list[str]:
     return list(tc.T)
 
 
-_dry: Counter = Counter()   # label -> consecutive attempts that kept nothing
+_dry: Counter = Counter()    # label -> consecutive attempts that kept nothing
+_busy: Counter = Counter()   # label -> workers writing for it right now
 
 
 def _next_label(counts: Counter, target: int) -> str | None:
@@ -280,8 +281,15 @@ def _next_label(counts: Counter, target: int) -> str | None:
     families never agree on it) is set aside after 3 tries, instead of being
     picked forever and starving every other label."""
     share = target / len(_labels())
-    open_ = [l for l in _labels() if counts[l] < share and _dry[l] < 3]
-    return min(open_, key=lambda l: (counts[l], random.random())) if open_ else None
+    with _lock:
+        open_ = [l for l in _labels() if counts[l] < share and _dry[l] < 3]
+        if not open_:
+            return None
+        # Count work already in flight, so 16 workers spread over 16 labels
+        # instead of all writing for the same thinnest one.
+        label = min(open_, key=lambda l: (counts[l] + _busy[l] * PER_CALL, random.random()))
+        _busy[label] += 1
+        return label
 
 
 def step(decls_list: list[dict], counts: Counter, target: int) -> tuple[int, str]:
@@ -289,6 +297,14 @@ def step(decls_list: list[dict], counts: Counter, target: int) -> tuple[int, str
     label = _next_label(counts, target)
     if label is None:
         return 0, "done"
+    try:
+        return _step(label, decls, decls_list, counts)
+    finally:
+        with _lock:
+            _busy[label] -= 1
+
+
+def _step(label: str, decls: dict, decls_list: list[dict], counts: Counter) -> tuple[int, str]:
     style = random.choice(STYLES)
     groq = _groq_model()
     # Mostly Gemma writes and Groq checks; a quarter the other way round, for
