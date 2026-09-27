@@ -151,6 +151,18 @@ def test_sandbox_really_does_file_tasks_without_touching_real_desktop():
     assert set(os.listdir(user_paths.desktop())) == before
 
 
+def test_copy_never_overwrites_and_rename_asks_for_a_name():
+    ok, detail = sb.run("file_controller", "copy", {"path": "budget.xlsx", "destination": "Desktop"}, {})
+    assert ok and "budget - Copy.xlsx" in detail
+    ok, detail = sb.run("file_controller", "rename", {"path": "photo.jpg", "new_name": "photo.jpg"}, {})
+    assert ok and "new name needed" in detail
+
+
+def test_relative_reminder_really_runs():
+    ok, detail = sb.run("reminder", "", {"time": "10 minutes", "message": "drink water"}, {})
+    assert ok, detail
+
+
 def test_sandbox_checks_the_answer_not_just_that_it_ran():
     want = {"value": "#10", "from_unit": "@km", "to_unit": "@miles"}
     assert sb.run("unit_converter", "", {"value": 10, "from_unit": "km", "to_unit": "miles"}, want)[0]

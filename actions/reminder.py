@@ -300,19 +300,12 @@ def reminder(
     if not time_str:
         return "I need a time to set a reminder."
 
-    # The model often passes the user's own words ("kal", "monday", "5 pm")
-    # instead of YYYY-MM-DD / HH:MM — read those rather than refuse them.
-    day = natural_date.resolve(date_str)
-    clock = None
-    for fmt in ("%H:%M", "%I:%M %p", "%I %p", "%I:%M%p", "%I%p"):
-        try:
-            clock = datetime.strptime(time_str.upper(), fmt).time()
-            break
-        except ValueError:
-            pass
-    if day is None or clock is None:
+    # The model often passes the user's own words ("10 minutes", "2 ghante
+    # baad", "kal", "shaam 4 baje") instead of YYYY-MM-DD / HH:MM — read those
+    # rather than refuse them.
+    target_dt = natural_date.parse_when(date_str, time_str)
+    if target_dt is None:
         return "I couldn't parse that date or time. Please use YYYY-MM-DD and HH:MM."
-    target_dt = datetime.combine(day, clock)
 
     if target_dt <= datetime.now():
         return "That time has already passed — I can't set a reminder in the past."

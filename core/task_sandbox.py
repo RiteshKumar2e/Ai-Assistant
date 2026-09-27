@@ -112,6 +112,10 @@ def _unsafe_path(v) -> bool:
 
 
 def _run_file(action: str, args: dict) -> tuple[bool, str]:
+    if action == "disk_usage":   # read-only totals — "C drive kitni bhari hai" → path "C:/" is right
+        import actions.file_controller as fc
+        result = str(fc.file_controller({"action": action, **args}))
+        return not any(m in result.lower() for m in _FAIL), result
     for k in ("path", "destination", "name", "new_name"):
         if _unsafe_path(args.get(k)):
             return False, f"invented an absolute/home path {k}={args.get(k)!r} (bare names are resolved on the Desktop)"
@@ -121,6 +125,8 @@ def _run_file(action: str, args: dict) -> tuple[bool, str]:
         existed = before.exists()
         result = str(fc.file_controller({"action": action, **args}))
         low = result.lower()
+        if action == "rename" and "new name needed" in low:
+            return True, result   # no new name was given — asking is the right move
         if any(m in low for m in _FAIL):
             return False, result
         if action in ("create_folder", "create_file"):

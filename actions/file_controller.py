@@ -303,6 +303,17 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
         return f"Could not move: {e}"
 
 
+def _free_copy_name(dst: Path) -> Path:
+    if not dst.exists():
+        return dst
+    stem, suffix = (dst.name, "") if dst.is_dir() else (dst.stem, dst.suffix)
+    for i in range(1, 1000):
+        cand = dst.with_name(f"{stem} - Copy{'' if i == 1 else f' ({i})'}{suffix}")
+        if not cand.exists():
+            return cand
+    raise FileExistsError(f"too many copies of {dst.name}")
+
+
 def copy_file(path: str, name: str = "", destination: str = "") -> str:
     try:
         base = _resolve_path(path)
@@ -320,6 +331,11 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
 
         if dst.is_dir():
             dst = dst / src.name
+        # Never overwrite: copying into the same folder ("Desktop pe iski copy
+        # bana do") or onto a same-named file used to fail or silently replace
+        # that file — and the undo then deleted it for good. Pick the next
+        # free "name - Copy.ext", the way Explorer does.
+        dst = _free_copy_name(dst)
 
         dst.parent.mkdir(parents=True, exist_ok=True)
 
@@ -340,7 +356,7 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
             return f"Removed the copy in {_copy.parent.name}/."
         push_undo(f"copied {src.name} to {dst.parent.name}/", _undo_copy)
 
-        return f"Copied: {src.name} → {dst.parent.name}/"
+        return f"Copied: {src.name} → {dst.parent.name}/{dst.name}"
 
     except Exception as e:
         return f"Could not copy: {e}"
@@ -354,8 +370,9 @@ def rename_file(path: str, name: str = "", new_name: str = "") -> str:
             return f"Access denied: {target}"
         if not target.exists():
             return f"Not found: {target.name}"
-        if not new_name:
-            return "No new name provided."
+        if not new_name or new_name.strip() == target.name:
+            # Asked to rename without saying to what — ask, don't guess.
+            return f"What should the new name for {target.name} be? (new name needed)"
 
         new_path = target.parent / new_name
         if new_path.exists():

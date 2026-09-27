@@ -398,7 +398,8 @@ def format_routing_lessons(limit: int = 15) -> str:
         if why.startswith("args:"):
             lines.append(f'  - "{ex[0]}" → {call} — get {why[5:]} exactly right')
         elif why == "exec":
-            lines.append(f'  - "{ex[0]}" → {call} — use the names exactly as said, no invented paths')
+            lines.append(f'  - "{ex[0]}" → {call} — this failed when really run; give every detail in the '
+                         f'form the tool expects, names exactly as said, never an invented path')
         else:
             lines.append(f'  - "{ex[0]}" → {call}, NOT {_pretty(why)}')
     if not lines:
