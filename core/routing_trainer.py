@@ -1,33 +1,41 @@
 """
-core/routing_trainer.py — JUDO sits its 20,000-question routing exam and
-learns from every wrong answer.
+core/routing_trainer.py — JUDO sits a 20,000-TASK exam and learns from every
+task it would get wrong.
 
-The exam is core/training_corpus (spoken commands with a known right tool).
-Each batch shows a text model the SAME tool catalogue the live voice session
-gets, plus the lessons learned so far, and asks it to route 50 commands at
-once. Every wrong pick is recorded as a confusion ("expected X, picked Y")
-with example phrasings; the most frequent confusions become the
-[ROUTING LESSONS] block that main.py puts in the live system prompt. Items
-it got wrong are re-asked in later batches — when they start passing, that
-confusion's count drops and the lesson fades out on its own.
+The exam is core/training_corpus: spoken commands (English/Hinglish/Hindi),
+each with the tool that must handle it AND the details a correct call must
+carry — who to message and what, which folder, which city, what value. Each
+batch shows a text model the SAME tool catalogue the live voice session gets
+(names, descriptions, parameters) plus the lessons learned so far, and asks it
+to turn every command into a full call. A task passes only if:
+
+  1. the right tool (and action) was picked,
+  2. every required detail is right ("Rahul", "main late aaunga", "Projects"),
+  3. for the tools where running it is harmless (files in a throwaway folder,
+     unit conversion, calendar, system status, memory lookup — see
+     core/task_sandbox), the real handler actually RAN with those arguments
+     and the result was verified.
+
+Every failure is recorded with its reason. The most frequent ones become the
+[TASK LESSONS] block main.py puts in the live system prompt — concrete
+"this sentence → this exact call" examples, which the live model follows
+well. Failed tasks are re-asked in later batches; once they pass, the lesson
+fades out on its own.
 
 This is prompt-level learning, not weight training: Gemini Live cannot be
-fine-tuned, but it follows concrete "this phrase → this tool" examples very
-well, and those are exactly what the exam produces.
-
-Like core/self_trainer, nothing here ever EXECUTES a tool — it only asks
-"which tool would you pick".
+fine-tuned. Nothing outside core/task_sandbox's fences is ever executed.
 
 CLI (run from the project folder):
     python -m core.routing_trainer              # full pass over all 20,000
     python -m core.routing_trainer --limit 2000 # just the next 2,000
-    python -m core.routing_trainer --status     # accuracy + top confusions
+    python -m core.routing_trainer --status     # scores, weak spots, lessons
     python -m core.routing_trainer --reset      # start over
 """
 from __future__ import annotations
 
 import ast
 import json
+import math
 import re
 import sys
 import time
@@ -35,7 +43,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Lock
 
-from core import training_corpus
+from core import task_sandbox, training_corpus
 
 
 def _base_dir() -> Path:
@@ -45,19 +53,21 @@ def _base_dir() -> Path:
 
 
 STATE_PATH = _base_dir() / "memory" / "routing_training.json"
-BATCH_SIZE = 50
+BATCH_SIZE = 100
 MAX_RETEST = 3000
 _lock = Lock()
 _inflight: set[int] = set()   # items a parallel worker is routing right now
-_corpus: list[tuple[str, str]] | None = None
+_corpus: list[tuple[str, str, dict]] | None = None
+_by_cmd: dict[str, tuple[str, dict]] = {}
 _SELECTORS = ("action", "mode")   # the parameter that picks what a tool does (web_search uses mode)
-_LINE_RE = re.compile(r"^\W*(\d+)\W+`?([a-z_]+)(?:\.([a-z_]+))?", re.I)
+_LINE_RE = re.compile(r"^\W*(\d+)[.):\s-]+`?([a-z_]+)(?:\.([a-z_]+))?`?\s*(.*)$", re.I)
 
 
-def corpus() -> list[tuple[str, str]]:
+def corpus() -> list[tuple[str, str, dict]]:
     global _corpus
     if _corpus is None:
         _corpus = training_corpus.build()
+        _by_cmd.update({c: (l, a) for c, l, a in _corpus})
     return _corpus
 
 
@@ -65,7 +75,8 @@ def corpus() -> list[tuple[str, str]]:
 
 def _fresh() -> dict:
     return {"fingerprint": training_corpus.fingerprint(corpus()), "cursor": 0, "round": 1,
-            "seen": 0, "correct": 0, "labels": {}, "confusions": {}, "wrong": {}, "history": []}
+            "seen": 0, "correct": 0, "tool_ok": 0, "args": [0, 0], "exec": [0, 0],
+            "labels": {}, "confusions": {}, "wrong": {}, "exec_fail": [], "history": []}
 
 
 def _read() -> dict:
@@ -121,16 +132,66 @@ def _catalogue(decls: list[dict]) -> str:
     for d in decls:
         if not d.get("name"):
             continue
-        row = f"- {d['name']}: {d.get('description', '')[:600]}"
+        row = f"- {d['name']}: {d.get('description', '')[:500]}"
         props = d.get("parameters", {}).get("properties", {})
         key = next((k for k in _SELECTORS if k in props), "")
         if key:
             row += f"\n    {key}s: {(props[key].get('description') or '')[:420]}"
+        other = [f"{k} ({(v.get('description') or '')[:70]})" for k, v in props.items() if k != key]
+        if other:
+            row += "\n    params: " + "; ".join(other)
         rows.append(row)
     return "\n".join(rows)
 
 
-# ── Scoring ──────────────────────────────────────────────────────────────────
+# ── Grading ──────────────────────────────────────────────────────────────────
+
+_UNITS = [("km", "kilometer", "kilometers", "kilometre", "kms"), ("miles", "mile", "mi"),
+          ("fahrenheit", "f", "°f", "degf"), ("celsius", "c", "°c", "centigrade", "degc"),
+          ("kg", "kilogram", "kilograms", "kgs"), ("pounds", "pound", "lbs", "lb"),
+          ("dollars", "dollar", "usd", "$"), ("rupees", "rupee", "inr", "rs", "₹"),
+          ("euro", "euros", "eur", "€"), ("feet", "foot", "ft"), ("cm", "centimeter", "centimeters", "centimetre"),
+          ("inches", "inch", "in")]
+_UNIT_OF = {alias: group[0] for group in _UNITS for alias in group}
+_UNIT_OF["lbs"] = "pounds"
+
+
+def _norm(x) -> str:
+    return re.sub(r"[\W_]+", " ", str(x).lower()).strip()
+
+
+def _value_ok(expected: str, got) -> bool:
+    """Does one argument the model gave satisfy one expectation from ARGS?"""
+    if got is None or str(got).strip() == "":
+        return False
+    tag, exp = (expected[0], expected[1:]) if expected[:1] in "~#@" else ("", expected)
+    if tag == "#":
+        nums = re.findall(r"-?\d+(?:\.\d+)?", str(got))
+        return any(math.isclose(float(n), float(exp)) for n in nums)
+    if tag == "@":
+        return _UNIT_OF.get(_norm(got), _norm(got)) == _UNIT_OF.get(exp.lower(), exp.lower())
+    words = _norm(exp).split()
+    joined = _norm(got).replace(" ", "")
+    hits = sum(w in joined for w in words)
+    if tag == "~":   # the model may rephrase — half the meaningful words is enough
+        return hits >= math.ceil(len(words) / 2)
+    return hits == len(words)
+
+
+def _args_error(expected: dict, got: dict) -> str | None:
+    """Name of the first wrong/missing parameter, or None if all are right."""
+    for spec, want in expected.items():
+        optional = spec.endswith("?")
+        alts = spec.rstrip("?").split("|")
+        given = [got[a] for a in alts if a in got and str(got[a]).strip() != ""]
+        if not given:
+            if optional:
+                continue
+            return spec.rstrip("?")
+        if not any(_value_ok(want, v) for v in given):
+            return spec.rstrip("?")
+    return None
+
 
 def _is_correct(expected: str, got: str) -> bool:
     if got in training_corpus.EQUIVALENT.get(expected, ()):
@@ -140,12 +201,58 @@ def _is_correct(expected: str, got: str) -> bool:
     return e_tool == g_tool and (not e_act or e_act == g_act)
 
 
-def _parse(reply: str, n: int) -> dict[int, str]:
-    picks: dict[int, str] = {}
+def grade(expected: str, want_args: dict, command: str, got: str, got_args: dict,
+          execute: bool = True) -> tuple[bool, str | None, str]:
+    """(passed, failure key, detail). Keys: "exp|got" wrong tool,
+    "exp|args:param" wrong detail, "exp|exec" the real run failed."""
+    if not _is_correct(expected, got):
+        return False, f"{expected}|{got}", ""
+    exact = got.split(".")[0] == expected.split(".")[0]
+    if exact:
+        bad = _args_error(want_args, got_args)
+        if bad:
+            return False, f"{expected}|args:{bad}", json.dumps(got_args, ensure_ascii=False)[:160]
+    tool, _, action = got.partition(".")
+    if execute and exact and task_sandbox.should_run(tool, action, got_args, command):
+        ok, detail = task_sandbox.run(tool, action, got_args, want_args)
+        if not ok:
+            return False, f"{expected}|exec", detail[:200]
+        return True, None, "ran"
+    return True, None, ""
+
+
+_BARE_KEY = re.compile(r"([{,]\s*)([A-Za-z_]\w*)\s*:")
+_JS_WORDS = {"true": "True", "false": "False", "null": "None"}
+
+
+def _loose_obj(blob: str) -> dict:
+    """JSON, a Python dict, or the JS-style `{app_name: 'Notion'}` Gemma
+    sometimes writes — all of them mean the same arguments."""
+    for text in (blob, _BARE_KEY.sub(r'\1"\2":', blob)):
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+        try:
+            return ast.literal_eval(re.sub(r"\b(true|false|null)\b", lambda m: _JS_WORDS[m.group(1)], text))
+        except Exception:
+            pass
+    return {}
+
+
+def _parse(reply: str, n: int) -> dict[int, tuple[str, dict]]:
+    picks: dict[int, tuple[str, dict]] = {}
     for line in reply.splitlines():
         m = _LINE_RE.match(line.strip())
-        if m and 1 <= int(m.group(1)) <= n:
-            picks[int(m.group(1))] = (m.group(2) + (f".{m.group(3)}" if m.group(3) else "")).lower()
+        if not m or not 1 <= int(m.group(1)) <= n:
+            continue
+        rest, args = m.group(4) or "", {}
+        if "{" in rest and "}" in rest:
+            args = _loose_obj(rest[rest.index("{"): rest.rindex("}") + 1])
+        args = args if isinstance(args, dict) else {}
+        label = m.group(2).lower()
+        act = m.group(3) or next((str(args.pop(k)) for k in _SELECTORS if k in args), "")
+        picks[int(m.group(1))] = (label + (f".{act.lower()}" if act else ""), args)
     return picks
 
 
@@ -155,8 +262,8 @@ def _ask(prompt: str) -> str:
 
 
 def run_batch(decls: list[dict], size: int = BATCH_SIZE) -> dict:
-    """Route one batch and fold the results into the state. Raises if the
-    model is unreachable — callers decide whether to back off or give up."""
+    """Route one batch of tasks and fold the results into the state. Raises if
+    the model is unreachable — callers decide whether to back off or give up."""
     items = corpus()
     with _lock:
         s = _read()
@@ -169,22 +276,17 @@ def run_batch(decls: list[dict], size: int = BATCH_SIZE) -> dict:
                 s["round"] += 1
             fresh.append(cursor)
             cursor += 1
-        # Reserve the slice now so a parallel worker never takes the same items.
+        # Reserve the slice now so a parallel worker never takes the same items,
+        # and mark it pending ("") so a crash or restart mid-batch loses none:
+        # pending items come back as re-tests until they get an answer.
         s["cursor"] = cursor
+        for k in fresh:
+            s["wrong"].setdefault(str(k), "")
         _write(s)
         batch = retest + fresh
         _inflight.update(batch)
     try:
         return _route(decls, batch)
-    except Exception:
-        # Nothing was learned from this batch — queue its new items for a
-        # retry ("" = not answered yet) instead of silently skipping them.
-        with _lock:
-            s = _read()
-            for k in fresh:
-                s["wrong"].setdefault(str(k), "")
-            _write(s)
-        raise
     finally:
         with _lock:
             _inflight.difference_update(batch)
@@ -199,47 +301,65 @@ def _route(decls: list[dict], batch: list[int]) -> dict:
         f"Available tools:\n{_catalogue(decls)}\n"
         "- none: no tool — small talk, thanks, greetings, jokes, or general knowledge you can answer yourself.\n\n"
         f"{lessons}\n"
-        "For EACH numbered command below, reply with exactly one line: `<number> <tool>` or, when the tool "
-        "has an actions/modes list, `<number> <tool>.<action>` using a name from that list. No other text.\n\n"
+        "Turn EACH numbered command below into the exact call JUDO should make. One line per command:\n"
+        "`<number> <tool>.<action> {json args}` (drop `.<action>` when the tool has no actions/modes list;\n"
+        "`<number> none {}` when no tool is needed). Put every detail the user gave into the args — names,\n"
+        "messages in the user's own words, paths as said (a bare name, never an invented full path), cities,\n"
+        "numbers. Leave out anything they did not say. No other text.\n\n"
         f"{numbered}"
     )
     picks = _parse(reply, len(batch))
     if len(picks) < len(batch) // 2:
         raise RuntimeError(f"unparseable router reply ({len(picks)}/{len(batch)} lines)")
 
+    graded = {}
+    for i, k in enumerate(batch, 1):   # run sandboxed tasks outside the state lock
+        if i in picks:
+            cmd, expected, want = items[k]
+            graded[i] = grade(expected, want, cmd, *picks[i])
+
     ok = wrong = 0
     with _lock:
         s = _read()
         for i, k in enumerate(batch, 1):
-            if i not in picks:
+            if i not in graded:
                 s["wrong"].setdefault(str(k), "")
                 continue
-            cmd, expected = items[k]
-            got = picks[i]
+            cmd, expected, want = items[k]
+            passed, key, detail = graded[i]
             lab = s["labels"].setdefault(expected, [0, 0])
             lab[0] += 1
             s["seen"] += 1
-            if _is_correct(expected, got):
+            tool_right = passed or "|args:" in key or key.endswith("|exec")
+            s["tool_ok"] += tool_right
+            if want and tool_right:
+                s["args"][0] += 1
+                s["args"][1] += passed or key.endswith("|exec")
+            if detail == "ran" or (key or "").endswith("|exec"):
+                s["exec"][0] += 1
+                s["exec"][1] += passed
+            if passed:
                 ok += 1
                 lab[1] += 1
                 s["correct"] += 1
-                key = s["wrong"].pop(str(k), None)
-                if key in s["confusions"]:   # a past mistake now answered right → its lesson weakens
-                    c = s["confusions"][key]
+                old = s["wrong"].pop(str(k), None)
+                if old in s["confusions"]:   # a past mistake now done right → its lesson weakens
+                    c = s["confusions"][old]
                     c["n"] -= 1
                     c["ex"] = [e for e in c["ex"] if e != cmd]
-            else:
-                wrong += 1
-                key = f"{expected}|{got}"
-                old = s["wrong"].get(str(k))
-                if old != key:
-                    if old in s["confusions"]:
-                        s["confusions"][old]["n"] -= 1
-                    c = s["confusions"].setdefault(key, {"n": 0, "ex": []})
-                    c["n"] += 1
-                    c["ex"] = ([cmd] + [e for e in c["ex"] if e != cmd])[:3]
-                    if len(s["wrong"]) < MAX_RETEST or old is not None:
-                        s["wrong"][str(k)] = key
+                continue
+            wrong += 1
+            if key.endswith("|exec"):
+                s["exec_fail"] = ([{"cmd": cmd, "args": picks[i][1], "result": detail}] + s["exec_fail"])[:100]
+            old = s["wrong"].get(str(k))
+            if old != key:
+                if old in s["confusions"]:
+                    s["confusions"][old]["n"] -= 1
+                c = s["confusions"].setdefault(key, {"n": 0, "ex": []})
+                c["n"] += 1
+                c["ex"] = ([cmd] + [e for e in c["ex"] if e != cmd])[:3]
+                if len(s["wrong"]) < MAX_RETEST or old is not None:
+                    s["wrong"][str(k)] = key
         s["confusions"] = {k: v for k, v in s["confusions"].items() if v["n"] > 0}
         s["history"] = (s["history"] + [[datetime.now().isoformat(timespec="seconds"), ok, ok + wrong]])[-2000:]
         _write(s)
@@ -253,17 +373,37 @@ def _pretty(label: str) -> str:
     return f"{tool} (action={act})" if act else tool
 
 
+def _call(label: str, args: dict) -> str:
+    tool, _, act = label.partition(".")
+    shown = {k.rstrip("?").split("|")[0]: v.lstrip("~#@") for k, v in args.items()}
+    if act:
+        shown = {"action": act, **shown}
+    return f"{tool}(" + ", ".join(f'{k}="{v}"' for k, v in shown.items()) + ")"
+
+
 def format_routing_lessons(limit: int = 15) -> str:
-    """Top recurring confusions as concrete phrase → tool examples, for the
-    system prompt. Empty until the exam has found something worth teaching."""
+    """Top recurring task failures as concrete sentence → exact call examples,
+    for the system prompt. Empty until the exam has found something to teach."""
+    corpus()
     with _lock:
         conf = _read()["confusions"]
     top = sorted((v["n"], k, v["ex"]) for k, v in conf.items() if v["n"] >= 2)[::-1][:limit]
-    if not top:
+    lines = []
+    for _n, key, ex in top:
+        if not ex:
+            continue
+        expected, why = key.split("|", 1)
+        _label, args = _by_cmd.get(ex[0], (expected, {}))
+        call = _call(expected, args)
+        if why.startswith("args:"):
+            lines.append(f'  - "{ex[0]}" → {call} — get {why[5:]} exactly right')
+        elif why == "exec":
+            lines.append(f'  - "{ex[0]}" → {call} — use the names exactly as said, no invented paths')
+        else:
+            lines.append(f'  - "{ex[0]}" → {call}, NOT {_pretty(why)}')
+    if not lines:
         return ""
-    lines = [f'  - "{ex[0]}" → {_pretty(k.split("|")[0])}, NOT {_pretty(k.split("|")[1])}'
-             for n, k, ex in top if ex]
-    return ("[ROUTING LESSONS — learned from JUDO's own practice tests; follow these]\n"
+    return ("[TASK LESSONS — learned from JUDO's own practice on 20,000 tasks; follow these]\n"
             + "\n".join(lines) + "\n")
 
 
@@ -273,31 +413,52 @@ def status() -> str:
     total = len(corpus())
     hist = s["history"][-20:]
     recent = sum(h[1] for h in hist) / max(1, sum(h[2] for h in hist))
-    worst = sorted(((v[1] / v[0], l, v[0]) for l, v in s["labels"].items() if v[0] >= 5))[:8]
-    lines = [f"Corpus: {total:,} commands | round {s['round']} | position {s['cursor']:,}/{total:,}",
-             f"Routed: {s['seen']:,} | overall accuracy {s['correct'] / max(1, s['seen']):.1%}"
+    pct = lambda a, b: f"{a / max(1, b):.1%}"
+    worst = sorted(((v[1] / v[0], l, v[0]) for l, v in s["labels"].items() if v[0] >= 5))[:10]
+    lines = [f"Exam: {total:,} tasks | round {s['round']} | position {s['cursor']:,}/{total:,}",
+             f"Tasks tried: {s['seen']:,} | fully correct {pct(s['correct'], s['seen'])}"
              f" | last {len(hist)} batches {recent:.1%} | pending re-tests {len(s['wrong']):,}",
-             "Weakest labels:"] + [f"  {a:.0%}  {l}  ({n} seen)" for a, l, n in worst]
-    lines.append(format_routing_lessons() or "No recurring confusions yet.")
+             f"  right tool {pct(s['tool_ok'], s['seen'])} | right details {pct(s['args'][1], s['args'][0])} ({s['args'][0]:,} checked)"
+             f" | really ran OK {pct(s['exec'][1], s['exec'][0])} ({s['exec'][0]:,} run in sandbox)",
+             "Weakest tasks:"] + [f"  {a:.0%}  {l}  ({n} tried)" for a, l, n in worst]
+    if s["exec_fail"]:
+        lines.append("Recent real-run failures:")
+        lines += [f"  \"{f['cmd']}\" {json.dumps(f['args'], ensure_ascii=False)[:80]} → {f['result'][:90]}"
+                  for f in s["exec_fail"][:5]]
+    lines.append(format_routing_lessons() or "No recurring mistakes yet.")
     return "\n".join(lines)
 
 
+OFFLINE_GIVE_UP = 3 * 3600
+
+
+def _online() -> bool:
+    import socket
+    try:
+        socket.getaddrinfo("generativelanguage.googleapis.com", 443)
+        return True
+    except OSError:
+        return False
+
+
 def train(limit: int | None = None, size: int = BATCH_SIZE, workers: int = 1, log=print) -> None:
-    """Blocking run over `limit` commands (default: the whole corpus) with
-    `workers` batches in flight. Backs off on quota errors and resumes exactly
+    """Blocking run over `limit` tasks, or (default) until every one of the
+    20,000 has been asked in this round, with `workers` batches in flight.
+    Backs off on quota errors, waits out lost internet, and resumes exactly
     where it stopped."""
     from concurrent.futures import ThreadPoolExecutor
     decls = load_tool_decls()
-    target = limit or len(corpus())
+    start_round = _read()["round"]
+    target = limit or 10 ** 9
     progress = {"done": 0, "claimed": 0}
     plock = Lock()
 
     def worker() -> None:
-        fails = 0
+        fails, offline_since = 0, None
         while True:
             with plock:
                 n = min(size, target - progress["claimed"])
-                if n <= 0:
+                if n <= 0 or (not limit and _read()["round"] > start_round):
                     return
                 progress["claimed"] += n
             try:
@@ -305,6 +466,17 @@ def train(limit: int | None = None, size: int = BATCH_SIZE, workers: int = 1, lo
             except Exception as e:
                 with plock:
                     progress["claimed"] -= n
+                if not _online():
+                    # No internet is not the model failing — wait it out
+                    # instead of burning the retry budget.
+                    offline_since = offline_since or time.monotonic()
+                    if time.monotonic() - offline_since > OFFLINE_GIVE_UP:
+                        log("[RoutingTrainer] offline too long; rerun to resume.")
+                        return
+                    log("[RoutingTrainer] no internet; checking again in 60s")
+                    time.sleep(60)
+                    continue
+                offline_since = None
                 fails += 1
                 if fails >= 8:
                     log(f"[RoutingTrainer] worker stopping after repeated failures ({e}); rerun to resume.")
@@ -316,7 +488,8 @@ def train(limit: int | None = None, size: int = BATCH_SIZE, workers: int = 1, lo
             fails = 0
             with plock:
                 progress["done"] += r["total"]
-                log(f"[RoutingTrainer] {progress['done']:,}/{target:,}  batch {r['ok']}/{r['total']}  "
+                goal = f"{target:,}" if limit else f"pass {_read()['cursor']:,}/{len(corpus()):,}"
+                log(f"[RoutingTrainer] {progress['done']:,} tasks ({goal})  batch {r['ok']}/{r['total']}  "
                     f"overall {r['correct'] / max(1, r['seen']):.1%}  round {r['round']}")
 
     with ThreadPoolExecutor(max(1, workers)) as pool:
@@ -331,8 +504,8 @@ if __name__ == "__main__":
             _s.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
-    ap = argparse.ArgumentParser(description="JUDO routing self-training")
-    ap.add_argument("--limit", type=int, help="commands to route this run (default: all 20,000)")
+    ap = argparse.ArgumentParser(description="JUDO 20,000-task self-training")
+    ap.add_argument("--limit", type=int, help="tasks to try this run (default: all 20,000)")
     ap.add_argument("--batch", type=int, default=BATCH_SIZE)
     ap.add_argument("--workers", type=int, default=3, help="batches in flight at once")
     ap.add_argument("--status", action="store_true")

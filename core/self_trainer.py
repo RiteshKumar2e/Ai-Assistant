@@ -18,7 +18,7 @@ itself an exam it already knows the answer to:
 
   EXAM BATCH      The next 50 commands of the fixed 20,000-command routing
                   exam (core/training_corpus + core/routing_trainer). Wrong
-                  picks become [ROUTING LESSONS] in the live prompt.
+                  tasks become [TASK LESSONS] in the live prompt.
 
   CODING DRILL    Invent a small task, generate code for it through the same
                   prompt shape code_helper uses (its own past lessons

@@ -29,16 +29,10 @@ def _save(events: list[dict]) -> None:
 
 
 def _resolve_date(raw: str) -> str | None:
-    raw = (raw or "").strip().lower()
-    today = datetime.now().date()
-    if raw in ("", "today"):
-        return today.isoformat()
-    if raw == "tomorrow":
-        return (today + timedelta(days=1)).isoformat()
-    try:
-        return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
-    except ValueError:
-        return None
+    """'today', 'kal', 'monday', 'parso', '5th October', YYYY-MM-DD, ..."""
+    from core.natural_date import resolve
+    d = resolve(raw)
+    return d.isoformat() if d else None
 
 
 def _friendly_time(t: str) -> str:

@@ -161,9 +161,10 @@ def _groq_generate(prompt: str, preferred: str | None) -> str:
     raise last_err or RuntimeError("No Groq models configured.")
 
 
-def _gemini_generate(contents, preferred: str | None, only: list[str] | None = None) -> str:
+def _gemini_generate(contents, preferred: str | None, only: list[str] | None = None,
+                     key: str | None = None) -> str:
     from google import genai
-    key = _gemini_api_key()
+    key = key or _gemini_api_key()
     if not key:
         raise RuntimeError("No Gemini API key configured.")
     cfg    = _load_config()
@@ -243,6 +244,10 @@ class TextModel:
         return _Response(_gemini_generate(contents, self._gemini_model))
 
 
+_bulk_turn = 0
+_bulk_lock = __import__("threading").Lock()
+
+
 def generate_bulk(prompt: str) -> str:
     """For bulk background jobs (core/routing_trainer): only the Gemma models
     (14,400 req/day each). Never falls through to the Flash-tier or Groq
@@ -251,7 +256,20 @@ def generate_bulk(prompt: str) -> str:
     gemma = [m for m in _load_models("gemini", _EMERGENCY_GEMINI) if m.startswith("gemma")]
     if not gemma:
         raise RuntimeError("No Gemma model configured for bulk jobs.")
-    return _gemini_generate(prompt, None, only=gemma)
+    from memory.config_manager import get_gemini_api_keys
+    keys = get_gemini_api_keys() or [_gemini_api_key()]
+    # Start each call on the next key, so parallel workers spread over every
+    # key's per-minute token limit instead of all queuing on the first one.
+    global _bulk_turn
+    with _bulk_lock:
+        start, _bulk_turn = _bulk_turn, _bulk_turn + 1
+    last_err: Exception | None = None
+    for i in range(len(keys)):
+        try:
+            return _gemini_generate(prompt, None, only=gemma, key=keys[(start + i) % len(keys)])
+        except Exception as e:
+            last_err = e
+    raise last_err or RuntimeError("No Gemini API key configured.")
 
 
 def get_text_model(gemini_model: str | None = None, groq_model: str | None = None) -> TextModel:

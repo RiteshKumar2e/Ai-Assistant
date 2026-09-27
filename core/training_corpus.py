@@ -1,10 +1,12 @@
 """
 core/training_corpus.py — JUDO's routing exam: 20,000+ labelled spoken commands.
 
-Every entry is (command, label). The label is the tool that MUST handle the
+Every entry is (command, label, args). The label is the tool that MUST handle the
 command, optionally with the action it must pick: "open_app",
 "computer_settings.volume_up", or "none" (small talk / answer from own
-knowledge, no tool). Commands mix English, Hinglish and Hindi (Devanagari)
+knowledge, no tool). `args` is what a correct call must contain — the right
+receiver, message, folder, city, value — so the exam checks the whole TASK,
+not just which tool was picked (see ARGS below). Commands mix English, Hinglish and Hindi (Devanagari)
 because that is how the user actually talks to JUDO.
 
 Built from templates x slot values x spoken fillers, with a fixed seed — the
@@ -28,7 +30,7 @@ S = {
             "PowerShell", "Snipping Tool", "VLC", "Outlook", "OneNote", "Postman", "Figma", "Slack",
             "Android Studio", "PyCharm", "Blender", "Clock", "Epic Games", "Notion", "Obsidian"],
     "site": ["YouTube", "ChatGPT", "Gmail", "Instagram", "Facebook", "Amazon", "Flipkart", "GitHub",
-             "LinkedIn", "Netflix", "Google Drive", "Twitter", "Reddit", "Wikipedia", "Stack Overflow",
+             "LinkedIn", "Netflix", "Google Drive", "Reddit", "Wikipedia", "Stack Overflow",
              "Hotstar", "Swiggy", "Zomato", "IRCTC", "Google Maps", "Claude", "Gemini", "Canva", "Leetcode"],
     "url": ["youtube.com", "chatgpt.com", "github.com", "amazon.in", "flipkart.com", "wikipedia.org",
             "gmail.com", "linkedin.com", "reddit.com", "netflix.com", "leetcode.com", "irctc.co.in"],
@@ -57,7 +59,7 @@ S = {
                  "petrol ka rate kya hai", "latest iPhone kab launch hoga", "India vs Pakistan score",
                  "who is the prime minister of Japan", "dollar ka rate kya hai", "new movies this week"],
     "folder": ["Projects", "Downloads", "Documents", "Desktop", "Pictures", "Music", "Videos", "College",
-               "Work", "Notes", "Assignments", "Photos", "Judo", "Backup", "Screenshots"],
+               "Work", "Notes", "Assignments", "Photos", "Backup", "Screenshots"],
     "newfolder": ["test", "Projects", "my app", "college notes", "photos 2026", "backup", "demo",
                   "AI assistant", "invoices", "practice", "portfolio", "new project", "hackathon"],
     "file": ["notes.txt", "resume.pdf", "report.docx", "data.csv", "todo.txt", "main.py",
@@ -75,7 +77,7 @@ S = {
               "interview", "college lecture", "client call", "exam", "family dinner"],
     "day": ["tomorrow", "kal", "friday", "monday", "next week", "parso", "on 5th October", "today", "aaj"],
     "script": ["calculator", "to-do list", "password generator", "web scraper", "file renamer",
-               "tic tac toe game", "prime number checker", "snake game", "weather fetcher", "PDF merger",
+               "prime number checker", "weather fetcher", "PDF merger",
                "number guessing game", "BMI calculator", "quiz program", "CSV to Excel converter"],
     "lang": ["Python", "JavaScript", "Java", "C++", "Python", "Python"],
     "project": ["todo app", "e-commerce website", "chat app", "portfolio website", "REST API",
@@ -204,7 +206,7 @@ T: dict[str, list[str]] = {
     "file_controller.largest": ["sabse badi files kaunsi hain", "show the largest files", "find big files eating space"],
     "file_controller.disk_usage": ["disk space kitna bacha hai", "how much storage is left", "C drive kitni bhari hai"],
     "file_controller.read": ["read {file}", "{file} me kya likha hai padho", "open {file} and read it to me"],
-    "open_folder": ["open {folder} folder", "{folder} folder kholo", "{folder} dikhao", "show me the {folder} folder",
+    "open_folder": ["open {folder} folder", "{folder} folder kholo", "{folder} folder dikhao", "show me the {folder} folder",
                     "{folder} फोल्डर खोलो", "open {folder} in VS Code", "{folder} ko VS Code me kholo",
                     "right click karke {folder} ko code se kholo", "{folder} me claude code kholo"],
     "desktop_control.wallpaper": ["wallpaper change karo", "change my wallpaper", "naya wallpaper laga do", "set a nature wallpaper"],
@@ -246,7 +248,76 @@ EQUIVALENT = {
     "computer_settings.scroll_up": {"computer_control.scroll", "browser_control.scroll"},
     "desktop_control.organize": {"file_controller.organize_desktop", "desktop_control.clean"},
     "file_controller.list": {"desktop_control.list"},
+    "desktop_control.wallpaper": {"desktop_control.task"},
 }
+
+# What a correct call must CONTAIN, per label: {param: expected}. A param may
+# list alternatives ("path|name" — the tool accepts either); "?" after it means
+# leaving it out is also right (the tool's default is that value). Expected
+# values: "{slot}" or "{a|b}" (first slot the template used; skipped if none),
+# or a literal. Prefix "~" = loose (half the words must appear, the model may
+# rephrase), "#" = number, "@" = unit; otherwise every word must appear.
+ARGS: dict[str, dict[str, str]] = {
+    "open_app": {"app_name": "{app}"},
+    "browser_control.go_to": {"url": "{site|url}"},
+    "browser_control.search": {"query": "~{topic|product|vtopic}"},
+    "web_search": {"query": "{topic}"},
+    "web_search.news": {"query": "{topic}"},
+    "web_search.price": {"query": "{product}"},
+    "web_search.compare": {"items|query": "{product}"},
+    "youtube_video.play": {"query": "~{song|vtopic}"},
+    "computer_settings.volume_set": {"value": "#{n}"},
+    "computer_settings.close_app": {"value|description": "{app}"},
+    "computer_control": {"text|title|description": "~{btn|msg|app}"},
+    "manage_monitor.add": {"topic": "{topic}"},
+    "manage_monitor.remove": {"topic": "{topic}"},
+    "code_helper": {"file_path|description": "{codefile}", "language?": "{lang}"},
+    "dev_agent": {"description": "~{project}"},
+    "file_controller.create_folder": {"path|name": "{newfolder}"},
+    "file_controller.create_file": {"path|name": "{file}"},
+    "file_controller.delete": {"path|name": "{file}"},
+    "file_controller.rename": {"path|name": "{file}"},
+    "file_controller.move": {"path|name": "{file}", "destination": "{folder}"},
+    "file_controller.copy": {"path|name": "{file}", "destination": "{folder}"},
+    "file_controller.find": {"name|extension": "{file|ext}"},
+    "file_controller.list": {"path": "{folder}"},
+    "file_controller.read": {"path|name": "{file}"},
+    "open_folder": {"folder_path": "{folder}"},
+    "flight_finder": {"origin": "{city}", "destination": "{city2}"},
+    "game_updater.update": {"game_name": "{game}"},
+    "game_updater.install": {"game_name": "{game}"},
+    "reminder": {"message": "~{task}"},
+    "calendar_agenda.add": {"title": "~{event}"},
+    "send_message": {"receiver": "{contact}", "message_text": "~{msg}"},
+    "send_email": {"to": "{email}"},
+    "weather_report": {"city": "{city}"},
+    "unit_converter": {"value": "#{uv}", "from_unit": "@{uf}", "to_unit": "@{ut}"},
+    "quiz_mode.start": {"topic": "{quiz}"},
+}
+# Extra expectations that depend on the wording of the template itself.
+ARGS_IF: dict[str, list[tuple[str, dict[str, str]]]] = {
+    "open_folder": [("vs code", {"open_in": "vscode"}), ("code se", {"open_in": "vscode"}),
+                    ("claude", {"open_in": "claude"})],
+    "screen_process": [("camera", {"angle": "camera"}), ("holding", {"angle": "camera"}),
+                       ("screen", {"angle?": "screen"})],
+    "send_message": [("telegram", {"platform": "telegram"}), ("whatsapp", {"platform?": "whatsapp"})],
+}
+
+
+def expected_args(label: str, tpl: str, fills: dict) -> dict[str, str]:
+    out = {}
+    for param, spec in ARGS.get(label, {}).items():
+        prefix = spec[0] if spec[0] in "~#@" else ""
+        slots = spec[len(prefix):].strip("{}").split("|")
+        val = next((fills[k] for k in slots if k in fills), None)
+        if val is not None:
+            out[param] = prefix + str(val)
+    for needle, extra in ARGS_IF.get(label, []):
+        if needle in tpl.lower():
+            out.update(extra)
+            break
+    return out
+
 
 _EXTRA = {"btn": ["Submit", "OK", "Next", "Login", "Download", "Send", "Save", "Cancel", "Start", "Install"],
           "n": ["20", "30", "50", "60", "75", "80", "100", "10", "40"]}
@@ -273,11 +344,12 @@ def _fills(tpl: str, rng: random.Random) -> dict:
     return out
 
 
-def build(size: int = TARGET_SIZE) -> list[tuple[str, str]]:
-    """Deterministic, de-duplicated, label-balanced corpus of `size` items."""
+def build(size: int = TARGET_SIZE) -> list[tuple[str, str, dict]]:
+    """Deterministic, de-duplicated, label-balanced corpus of `size` tasks:
+    (spoken command, label, expected args)."""
     rng = random.Random(_SEED)
     labels = list(T)
-    per_label = {l: set() for l in labels}
+    per_label: dict[str, dict[str, dict]] = {l: {} for l in labels}
     # Upper bound on unique phrasings per label keeps small labels (close_camera)
     # from spinning forever; the leftover budget flows to the rich ones.
     n_actions = {}
@@ -289,9 +361,11 @@ def build(size: int = TARGET_SIZE) -> list[tuple[str, str]]:
         while len(per_label[l]) < cap and tries < cap * 25:
             tries += 1
             tpl = rng.choice(T[l])
-            text = tpl.format(**_fills(tpl, rng))
+            fills = _fills(tpl, rng)
+            text = tpl.format(**fills)
             text = (rng.choice(_PRE) + text + ("" if l in _NO_SUFFIX else rng.choice(_SUF))).strip()
-            per_label[l].add(text[0].upper() + text[1:] if rng.random() < .3 else text)
+            text = text[0].upper() + text[1:] if rng.random() < .3 else text
+            per_label[l].setdefault(text, expected_args(l, tpl, fills))
     # A phrasing generated under two labels is genuinely ambiguous — it has no
     # single right answer, so it cannot be an exam question.
     owners: dict[str, set] = {}
@@ -304,13 +378,13 @@ def build(size: int = TARGET_SIZE) -> list[tuple[str, str]]:
     # Interleave actions within each tool, then round-robin across tools — every
     # tool gets an equal share (computer_settings has 28 actions, it must not
     # drown the rest) and any prefix of the corpus is balanced too.
-    by_tool: dict[str, list[tuple[str, str]]] = {}
+    by_tool: dict[str, list] = {}
     for l, cmds in pools.items():
-        by_tool.setdefault(l.split(".")[0], []).append([(c, l) for c in cmds])
+        by_tool.setdefault(l.split(".")[0], []).append([(c, l, per_label[l][c]) for c in cmds])
     streams = [[x for grp in itertools.zip_longest(*g) for x in grp if x] for g in by_tool.values()]
     out = [x for grp in itertools.zip_longest(*streams) for x in grp if x]
     return out[:size]
 
 
-def fingerprint(corpus: list[tuple[str, str]]) -> str:
-    return hashlib.sha1("\n".join(f"{c}\t{l}" for c, l in corpus).encode()).hexdigest()[:12]
+def fingerprint(corpus: list[tuple[str, str, dict]]) -> str:
+    return hashlib.sha1("\n".join(f"{c}\t{l}\t{sorted(a.items())}" for c, l, a in corpus).encode()).hexdigest()[:12]
