@@ -351,20 +351,29 @@ def _step(label: str, decls: dict, decls_list: list[dict], counts: Counter) -> t
     return added, f"{label} [{style[:28]}] {gen[1]}→{ver[1]}: {len(cands)} written, {len(kept)} agreed, {added} new"
 
 
-def run(target: int = TARGET, workers: int = 6, log=print) -> None:
+def run(target: int = TARGET, workers: int = 6, log=print, hours: float = 0) -> None:
+    """With `hours`, an unattended run: workers never give up on errors (they
+    back off and retry) and set-aside labels get another chance every hour,
+    until the target or the deadline — whichever comes first."""
     from concurrent.futures import ThreadPoolExecutor
+    deadline = time.monotonic() + hours * 3600 if hours else None
+    live = lambda: deadline is None or time.monotonic() < deadline
     decls = rt.load_tool_decls()
     counts = Counter(t["label"] for t in load())
     stats = {"added": 0}
 
     def worker():
-        fails = 0
-        while sum(counts.values()) < target:
+        fails, dry_reset = 0, time.monotonic()
+        while sum(counts.values()) < target and live():
+            if deadline and time.monotonic() - dry_reset > 3600:
+                with _lock:
+                    _dry.clear()   # retry the labels set aside as "never agreed", new styles may work
+                dry_reset = time.monotonic()
             try:
                 added, msg = step(decls, counts, target)
             except Exception as e:
                 fails += 1
-                if fails >= 10:
+                if fails >= 10 and deadline is None:
                     log(f"[Seed] worker stopping after repeated failures ({str(e)[:120]}); rerun to resume.")
                     return
                 if not rt._online():
@@ -373,7 +382,12 @@ def run(target: int = TARGET, workers: int = 6, log=print) -> None:
                 time.sleep(min(300, 15 * 2 ** (fails - 1)))
                 continue
             if msg == "done":
-                return
+                if deadline is None:
+                    return
+                with _lock:
+                    _dry.clear()
+                time.sleep(60)
+                continue
             fails = 0
             with _lock:
                 stats["added"] += added
@@ -406,10 +420,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Grow JUDO's exam with cross-verified seed tasks")
     ap.add_argument("--target", type=int, default=TARGET)
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--hours", type=float, default=0, help="unattended run: never give up until this many hours pass")
     ap.add_argument("--status", action="store_true")
     a = ap.parse_args()
     if a.status:
         print(status())
     else:
-        run(a.target, a.workers)
+        run(a.target, a.workers, hours=a.hours)
         print(status())
