@@ -46,16 +46,18 @@ def test_append_skips_duplicates_and_template_commands(monkeypatch):
     assert [json.loads(l)["cmd"] for l in sg.STORE.read_text(encoding="utf-8").splitlines()] == ["brand new"]
 
 
-def test_groq_is_left_alone_once_down_to_the_reserve(monkeypatch):
-    sg._groq_left.update({m: sg.GROQ_RESERVE for m in sg.GROQ_MODELS})
+def test_groq_is_left_alone_once_every_key_is_down_to_the_reserve(monkeypatch):
+    monkeypatch.setattr(sg, "_groq_keys", lambda: ["k1", "k2"])
+    sg._groq_left.update({(k, m): sg.GROQ_RESERVE for k in ("k1", "k2") for m in sg.GROQ_MODELS})
     assert sg._groq_model() is None
-    sg._groq_left[sg.GROQ_MODELS[0]] = sg.GROQ_RESERVE + 50
+    sg._groq_left[("k2", sg.GROQ_MODELS[0])] = sg.GROQ_RESERVE + 50
     assert sg._groq_model() == sg.GROQ_MODELS[0]
     assert "openai/gpt-oss-120b" not in sg.GROQ_MODELS   # JUDO's own first-choice model is never spent
 
 
 def test_step_without_groq_pairs_the_two_gemma_models(monkeypatch):
-    sg._groq_left.update({m: 0 for m in sg.GROQ_MODELS})
+    monkeypatch.setattr(sg, "_groq_keys", lambda: ["k1"])
+    sg._groq_left.update({("k1", m): 0 for m in sg.GROQ_MODELS})
     calls = []
 
     def ask(provider, model, prompt):
@@ -87,3 +89,32 @@ def test_parallel_workers_spread_over_labels_and_dry_labels_are_skipped(monkeypa
     monkeypatch.setattr(sg, "_dry", Counter({"c": 3}))
     picks = {sg._next_label(Counter(), 300) for _ in range(2)}
     assert picks == {"a", "b"}          # second worker avoids the label already in flight; dry "c" never picked
+
+
+class _Resp:
+    def __init__(self, code, left="900", text="ok"):
+        self.status_code, self.headers, self._text = code, {"x-ratelimit-remaining-requests": left}, text
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(self.status_code)
+
+    def json(self):
+        return {"choices": [{"message": {"content": self._text}}]}
+
+
+def test_groq_falls_through_to_the_next_key(monkeypatch):
+    import requests
+    monkeypatch.setattr(sg, "_groq_keys", lambda: ["dead", "limited", "good"])
+    codes = {"dead": 401, "limited": 429, "good": 200}
+    used = []
+
+    def post(url, headers, **kw):
+        key = headers["Authorization"].split()[-1]
+        used.append(key)
+        return _Resp(codes[key], text=f"from {key}")
+
+    monkeypatch.setattr(requests, "post", post)
+    assert sg._groq("hi", sg.GROQ_MODELS[0]) == "from good"
+    used.clear()
+    assert sg._groq("hi", sg.GROQ_MODELS[0]) == "from good" and used == ["good"]   # dead + resting keys skipped

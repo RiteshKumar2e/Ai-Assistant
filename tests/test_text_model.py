@@ -26,6 +26,7 @@ def isolated_config(tmp_path, monkeypatch):
     }), encoding="utf-8")
     monkeypatch.setattr(tm, "_CONFIG_PATH", cfg_path)
     monkeypatch.setattr(tm, "_MODELS_PATH", models_path)
+    monkeypatch.setattr(tm, "_groq_paused", {})   # a 429 in one test must not rest a model in the next
     return cfg_path, models_path
 
 
@@ -281,3 +282,27 @@ def test_multimodal_content_skips_groq_entirely(monkeypatch):
     result = model.generate_content([object(), "some text"])
     assert result.text == "described the image"
     assert groq_called == []
+
+
+def test_groq_tries_best_model_on_every_key_before_a_weaker_model(monkeypatch):
+    import requests
+    from core import text_model as tm
+    monkeypatch.setattr(tm, "_load_config", lambda: {"groq_api_keys": ["k1", "k2"], "groq_api_key": "k3"})
+    monkeypatch.setattr(tm, "_load_models", lambda provider, emergency: ["best", "worse"])
+    monkeypatch.setattr(tm, "_groq_paused", {})
+    calls = []
+
+    class R:
+        def __init__(self, code): self.status_code = code
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": "done"}}]}
+
+    def post(url, headers, json, timeout):
+        key = headers["Authorization"].split()[-1]
+        calls.append((json["model"], key))
+        return R(200 if key == "k3" else (401 if key == "k1" else 429))
+
+    monkeypatch.setattr(requests, "post", post)
+    assert tm._groq_generate("hi", None) == "done"
+    assert calls == [("best", "k1"), ("best", "k2"), ("best", "k3")]
+    assert tm._groq_api_keys() == ["k1", "k2", "k3"]

@@ -47,7 +47,7 @@ from core import training_corpus as tc
 STORE = rt._base_dir() / "memory" / "seed_tasks.jsonl"
 TARGET = 100_000
 PER_CALL = 20
-GROQ_MODELS = ["qwen/qwen3.8-27b", "openai/gpt-oss-20b"]   # never gpt-oss-120b: JUDO's live first choice
+GROQ_MODELS = ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-safeguard-20b"]   # never gpt-oss-120b: JUDO's live first choice
 GROQ_RESERVE = 500                                          # requests/day always left for JUDO
 GEMMA = ["gemma-4-26b-a4b-it", "gemma-4-31b-it"]
 
@@ -64,8 +64,10 @@ STYLES = [
 ]
 
 _lock = Lock()
-_groq_left: dict[str, int] = {}
-_groq_pause: dict[str, float] = {}   # model -> monotonic time its per-minute window reopens
+# Per (key, model): requests left today, and when a full per-minute window
+# reopens. Every Groq key keeps GROQ_RESERVE requests for JUDO's live use.
+_groq_left: dict[tuple[str, str], int] = {}
+_groq_pause: dict[tuple[str, str], float] = {}
 _known: set[str] | None = None
 
 
@@ -115,31 +117,51 @@ def _gemma(prompt: str, model: str) -> str:
     return generate_bulk(prompt, models=[model])
 
 
+def _groq_keys() -> list[str]:
+    from core.text_model import _groq_api_keys
+    return _groq_api_keys()
+
+
+def _groq_usable(key: str, model: str, now: float) -> bool:
+    return (_groq_left.get((key, model), GROQ_RESERVE + 1) > GROQ_RESERVE
+            and _groq_pause.get((key, model), 0) <= now)
+
+
 def _groq_model() -> str | None:
-    now = time.monotonic()
+    """A Groq model that still has room on at least one key."""
+    now, keys = time.monotonic(), _groq_keys()
     with _lock:
-        ok = [m for m in GROQ_MODELS
-              if _groq_left.get(m, GROQ_RESERVE + 1) > GROQ_RESERVE and _groq_pause.get(m, 0) <= now]
+        ok = [m for m in GROQ_MODELS if any(_groq_usable(k, m, now) for k in keys)]
     return random.choice(ok) if ok else None
 
 
 def _groq(prompt: str, model: str) -> str:
+    """One call, falling through the keys: a key at its reserve, resting after
+    a 429, or rejected is skipped and the next key takes the call."""
     import requests
-    from core.text_model import _GROQ_URL, _groq_api_key
-    r = requests.post(_GROQ_URL, headers={"Authorization": f"Bearer {_groq_api_key()}"},
-                      json={"model": model, "messages": [{"role": "user", "content": prompt}]}, timeout=120)
-    left = r.headers.get("x-ratelimit-remaining-requests")
-    if left and left.isdigit():
+    from core.text_model import _GROQ_URL
+    last: Exception = RuntimeError(f"no Groq key has room for {model}")
+    for key in _groq_keys():
         with _lock:
-            _groq_left[model] = int(left)
-    if r.status_code == 429:
-        # Per-minute window full: rest this model until Groq says it reopens.
-        # (The DAILY reserve is tracked separately, from remaining-requests.)
-        wait = r.headers.get("retry-after", "")
+            if not _groq_usable(key, model, time.monotonic()):
+                continue
+        r = requests.post(_GROQ_URL, headers={"Authorization": f"Bearer {key}"},
+                          json={"model": model, "messages": [{"role": "user", "content": prompt}]}, timeout=120)
+        left = r.headers.get("x-ratelimit-remaining-requests")
         with _lock:
-            _groq_pause[model] = time.monotonic() + (float(wait) if wait.replace(".", "").isdigit() else 60)
-    r.raise_for_status()
-    return (r.json()["choices"][0]["message"]["content"] or "").strip()
+            if left and left.isdigit():
+                _groq_left[(key, model)] = int(left)
+            if r.status_code == 429:
+                wait = r.headers.get("retry-after", "")
+                _groq_pause[(key, model)] = time.monotonic() + (float(wait) if wait.replace(".", "").isdigit() else 60)
+            elif r.status_code in (401, 403):
+                _groq_left[(key, model)] = 0   # bad key: never again this run
+        if r.status_code in (401, 403, 429):
+            last = RuntimeError(f"Groq {r.status_code} on {model}")
+            continue
+        r.raise_for_status()
+        return (r.json()["choices"][0]["message"]["content"] or "").strip()
+    raise last
 
 
 def _ask(provider: str, model: str, prompt: str) -> str:

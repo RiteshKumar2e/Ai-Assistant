@@ -393,3 +393,31 @@ def build(size: int = TARGET_SIZE) -> list[tuple[str, str, dict]]:
 
 def fingerprint(corpus: list[tuple[str, str, dict]]) -> str:
     return hashlib.sha1("\n".join(f"{c}\t{l}\t{sorted(a.items())}" for c, l, a in corpus).encode()).hexdigest()[:12]
+
+
+def sample(rng: random.Random) -> tuple[str, str, dict[str, str]]:
+    """One fresh random task, for training data streamed at any scale (the
+    Kaggle router training draws tens of millions): tool picked uniformly,
+    then one of its actions, then a template and slot values. Returns
+    (command, label, {param: value exactly as it appears in the command}) —
+    constants implied by wording (open_in="vscode") are left out, since no
+    span of the sentence spells them."""
+    label = rng.choice(_TOOLS[rng.choice(_TOOL_NAMES)])
+    tpl = rng.choice(T[label])
+    fills = _fills(tpl, rng)
+    text = tpl.format(**fills)
+    text = (rng.choice(_PRE) + text + ("" if label in _NO_SUFFIX else rng.choice(_SUF))).strip()
+    text = text[0].upper() + text[1:] if rng.random() < .3 else text
+    implied = {k for _, extra in ARGS_IF.get(label, []) for k in extra}
+    args = {}
+    for spec, want in expected_args(label, tpl, fills).items():
+        value = want.lstrip("~#@")
+        if spec not in implied and value.lower() in text.lower():
+            args[spec.rstrip("?").split("|")[0]] = value
+    return text, label, args
+
+
+_TOOLS: dict[str, list[str]] = {}
+for _label in T:
+    _TOOLS.setdefault(_label.split(".")[0], []).append(_label)
+_TOOL_NAMES = sorted(_TOOLS)

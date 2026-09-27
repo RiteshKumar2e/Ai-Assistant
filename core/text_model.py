@@ -98,8 +98,25 @@ def _model_chain(cfg: dict, list_key: str, single_key: str, preferred: str | Non
     return ordered
 
 
+def _groq_api_keys() -> list[str]:
+    """Every configured Groq key, in fallback order: the plural
+    `groq_api_keys` list, then the single `groq_api_key` — each once."""
+    cfg = _load_config()
+    many = cfg.get("groq_api_keys")
+    keys = [k for k in (many if isinstance(many, list) else []) if isinstance(k, str)]
+    keys.append(cfg.get("groq_api_key") or "")
+    return list(dict.fromkeys(k.strip() for k in keys if k and k.strip()))
+
+
 def _groq_api_key() -> str:
-    return (_load_config().get("groq_api_key") or "").strip()
+    keys = _groq_api_keys()
+    return keys[0] if keys else ""
+
+
+# (key, model) -> monotonic time its rate-limit window reopens. A key+model
+# that just hit 429 is skipped until then instead of re-hit on every call.
+_groq_paused: dict[tuple[str, str], float] = {}
+_GROQ_PAUSE_SECS = 60
 
 
 def _gemini_api_key() -> str:
@@ -127,37 +144,56 @@ def _gemini_is_auth_error(e: Exception) -> bool:
 
 
 def _groq_generate(prompt: str, preferred: str | None) -> str:
-    key = _groq_api_key()
-    if not key:
+    """Model-first, key-second: the best model is tried on EVERY key before
+    dropping to a weaker model, so one key's quota running out just moves the
+    call to the next key. A rejected key is skipped for the rest of the call,
+    a rate-limited key+model rests for a minute."""
+    import time
+    keys = _groq_api_keys()
+    if not keys:
         raise RuntimeError("No Groq API key configured.")
     cfg   = _load_config()
     chain = _model_chain(cfg, "groq_models", "groq_model", preferred, _load_models("groq", _EMERGENCY_GROQ))
 
+    rejected: set[str] = set()
     last_err: Exception | None = None
     for model in chain:
-        try:
-            resp = requests.post(
-                _GROQ_URL,
-                headers={"Authorization": f"Bearer {key}"},
-                json={"model": model, "messages": [{"role": "user", "content": prompt}]},
-                timeout=60,
-            )
-            # A rejected key fails identically for every model in the chain —
-            # detected once, there is no point burning the rest of it on the
-            # same 401/403. Anything else (404 retired, 429 quota, 5xx, a
-            # network timeout) is exactly the kind of per-model failure the
-            # chain exists to route around, so it just moves on.
+        for n, key in enumerate(keys, 1):
+            if key in rejected or _groq_paused.get((key, model), 0) > time.monotonic():
+                continue
+            try:
+                resp = requests.post(
+                    _GROQ_URL,
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+                    timeout=60,
+                )
+            except Exception as e:   # network trouble — the next key won't fare better
+                last_err = e
+                print(f"[TextModel] Groq {model} failed ({e}) — trying next model")
+                break
             if resp.status_code in (401, 403):
-                raise RuntimeError("Groq API key rejected — check config/api_keys.json's groq_api_key.")
-            resp.raise_for_status()
-            return (resp.json()["choices"][0]["message"]["content"] or "").strip()
-        except RuntimeError as e:
-            last_err = e
-            print(f"[TextModel] {e} — skipping remaining Groq models")
+                rejected.add(key)
+                last_err = RuntimeError(f"Groq key #{n} rejected — check config/api_keys.json.")
+                print(f"[TextModel] {last_err}")
+                continue
+            if resp.status_code == 429:
+                _groq_paused[(key, model)] = time.monotonic() + _GROQ_PAUSE_SECS
+                last_err = RuntimeError(f"Groq key #{n} rate-limited on {model}")
+                print(f"[TextModel] {last_err} — trying next key")
+                continue
+            if resp.status_code == 404:   # model retired: same on every key
+                last_err = RuntimeError(f"Groq model {model} not found")
+                break
+            try:
+                resp.raise_for_status()
+                return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+            except Exception as e:
+                last_err = e
+                print(f"[TextModel] Groq {model} failed ({e}) — trying next")
+                break
+        if len(rejected) == len(keys):
             break
-        except Exception as e:
-            last_err = e
-            print(f"[TextModel] Groq {model} failed ({e}) — trying next")
     raise last_err or RuntimeError("No Groq models configured.")
 
 
