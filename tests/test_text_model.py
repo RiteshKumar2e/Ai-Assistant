@@ -306,3 +306,59 @@ def test_groq_tries_best_model_on_every_key_before_a_weaker_model(monkeypatch):
     assert tm._groq_generate("hi", None) == "done"
     assert calls == [("best", "k1"), ("best", "k2"), ("best", "k3")]
     assert tm._groq_api_keys() == ["k1", "k2", "k3"]
+
+
+def _fake_genai(monkeypatch, behaviour):
+    """Install a fake google.genai whose Client(api_key) answers per behaviour(key, model)."""
+    import sys
+    import types as _types
+    calls = []
+
+    class _Models:
+        def __init__(self, key):
+            self.key = key
+
+        def generate_content(self, model, contents, **kw):
+            calls.append((model, self.key))
+            result = behaviour(self.key, model)
+            if isinstance(result, Exception):
+                raise result
+            return type("R", (), {"text": result})()
+
+    class _Client:
+        def __init__(self, api_key):
+            self.models = _Models(api_key)
+
+    mod = _types.ModuleType("genai")
+    mod.Client = _Client
+    google = _types.ModuleType("google")
+    google.genai = mod
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.genai", mod)
+    monkeypatch.setattr(tm, "_gemini_paused", {})
+    return calls
+
+
+def test_gemini_uses_every_key_before_a_weaker_model(monkeypatch):
+    monkeypatch.setattr(tm, "_load_config", lambda: {"gemini_api_keys": ["g1", "g2", "g3"], "gemini_api_key": "g1"})
+    monkeypatch.setattr(tm, "_load_models", lambda provider, emergency: ["best", "worse"])
+
+    def behaviour(key, model):
+        if key == "g1":
+            return RuntimeError("400 API key not valid")
+        if key == "g2":
+            return RuntimeError("429 RESOURCE_EXHAUSTED")
+        return f"{model} via {key}"
+
+    calls = _fake_genai(monkeypatch, behaviour)
+    assert tm._gemini_generate("hi", None) == "best via g3"
+    assert calls == [("best", "g1"), ("best", "g2"), ("best", "g3")]
+    assert tm._gemini_api_keys() == ["g1", "g2", "g3"] and tm._gemini_api_key() == "g1"
+
+
+def test_gemini_server_error_moves_to_next_model_not_next_key(monkeypatch):
+    monkeypatch.setattr(tm, "_load_config", lambda: {"gemini_api_keys": ["g1", "g2"]})
+    monkeypatch.setattr(tm, "_load_models", lambda provider, emergency: ["flaky", "steady"])
+    calls = _fake_genai(monkeypatch, lambda key, model: RuntimeError("500 INTERNAL") if model == "flaky" else "ok")
+    assert tm._gemini_generate("hi", None) == "ok"
+    assert calls == [("flaky", "g1"), ("steady", "g1")]

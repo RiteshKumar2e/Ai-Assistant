@@ -312,8 +312,9 @@ def _focus_window(title: str) -> str:
     return f"focus_window: unknown OS '{os_name}'"
 
 def _screen_find(description: str) -> tuple[int, int] | None:
-    api_key = _get_api_key()
-    if not api_key:
+    from core.text_model import _gemini_api_keys
+    keys = _gemini_api_keys()   # every configured key: one out of quota → the next
+    if not keys:
         print("[ComputerControl] ⚠️ No API key for screen_find")
         return None
 
@@ -328,7 +329,6 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         img.save(buf, format="PNG")
         image_bytes = buf.getvalue()
 
-        client = genai.Client(api_key=api_key)
         prompt = (
             f"This is a screenshot of a {w}×{h} pixel screen. "
             f"Locate the UI element described as: '{description}'. "
@@ -336,15 +336,15 @@ def _screen_find(description: str) -> tuple[int, int] | None:
             f"If the element is not visible, reply: NOT_FOUND"
         )
 
-        response = client.models.generate_content(
-            model="gemini-flash-lite-latest",
-            contents=[
-                gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                prompt,
-            ],
-        )
+        from core.text_model import _gemini_over_keys
 
-        text = (response.text or "").strip()
+        def call(client, model):
+            return (client.models.generate_content(
+                model=model,
+                contents=[gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"), prompt],
+            ).text or "").strip()
+
+        text = _gemini_over_keys(call, ["gemini-flash-lite-latest"], keys, " (screen_find)")
         if "NOT_FOUND" in text.upper():
             return None
 

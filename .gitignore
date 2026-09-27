@@ -69,3 +69,6 @@ logs/
 downloads/
 screenshots/
 .wakeword_venv/
+
+# Trained router model (download from Kaggle)
+models/

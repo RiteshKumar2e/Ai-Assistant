@@ -120,7 +120,8 @@ _GROQ_PAUSE_SECS = 60
 
 
 def _gemini_api_key() -> str:
-    return (_load_config().get("gemini_api_key") or "").strip()
+    keys = _gemini_api_keys()
+    return keys[0] if keys else ""
 
 
 def _is_text_only(contents) -> bool:
@@ -197,62 +198,89 @@ def _groq_generate(prompt: str, preferred: str | None) -> str:
     raise last_err or RuntimeError("No Groq models configured.")
 
 
-def _gemini_generate(contents, preferred: str | None, only: list[str] | None = None,
-                     key: str | None = None) -> str:
-    from google import genai
-    key = key or _gemini_api_key()
-    if not key:
-        raise RuntimeError("No Gemini API key configured.")
-    cfg    = _load_config()
-    chain  = only or _model_chain(cfg, "gemini_models", "gemini_model", preferred, _load_models("gemini", _EMERGENCY_GEMINI))
-    client = genai.Client(api_key=key)
+def _gemini_api_keys() -> list[str]:
+    """Every configured Gemini key, in fallback order: the plural
+    `gemini_api_keys` list, then the single `gemini_api_key` — each once."""
+    cfg = _load_config()
+    many = cfg.get("gemini_api_keys")
+    keys = [k for k in (many if isinstance(many, list) else []) if isinstance(k, str)]
+    keys.append(cfg.get("gemini_api_key") or "")
+    return list(dict.fromkeys(k.strip() for k in keys if k and k.strip()))
 
+
+_gemini_paused: dict[tuple[str, str], float] = {}   # (key, model) resting after a 429
+
+
+def _gemini_is_quota_error(e: Exception) -> bool:
+    msg = str(getattr(e, "message", "") or e)
+    return "429" in msg or "RESOURCE_EXHAUSTED" in msg
+
+
+def _gemini_over_keys(call, chain: list[str], keys: list[str], what: str) -> str:
+    """Model-first, key-second, like the Groq chain: the preferred model is
+    tried on EVERY key before a weaker model. A rejected key is skipped for
+    the rest of the call; a key+model that hit its quota rests a minute."""
+    import time
+    from google import genai
+    if not keys:
+        raise RuntimeError("No Gemini API key configured.")
+    clients: dict[str, object] = {}
+    rejected: set[str] = set()
     last_err: Exception | None = None
     for model in chain:
-        try:
-            response = client.models.generate_content(model=model, contents=contents)
-            return (response.text or "").strip()
-        except Exception as e:
-            last_err = e
-            if _gemini_is_auth_error(e):
-                print("[TextModel] Gemini API key rejected — skipping remaining Gemini models")
+        for n, key in enumerate(keys, 1):
+            if key in rejected or _gemini_paused.get((key, model), 0) > time.monotonic():
+                continue
+            try:
+                client = clients.setdefault(key, genai.Client(api_key=key))
+                return call(client, model)
+            except Exception as e:
+                last_err = e
+                if _gemini_is_auth_error(e):
+                    rejected.add(key)
+                    print(f"[TextModel] Gemini key #{n} rejected — skipping it")
+                    continue
+                if _gemini_is_quota_error(e):
+                    _gemini_paused[(key, model)] = time.monotonic() + 60
+                    print(f"[TextModel] Gemini key #{n} out of quota on {model} — trying next key")
+                    continue
+                print(f"[TextModel] Gemini {model}{what} failed ({str(e)[:120]}) — trying next model")
                 break
-            print(f"[TextModel] Gemini {model} failed ({e}) — trying next")
+        if len(rejected) == len(keys):
+            break
     raise last_err or RuntimeError("No Gemini models configured.")
+
+
+def _gemini_generate(contents, preferred: str | None, only: list[str] | None = None,
+                     keys: list[str] | None = None) -> str:
+    cfg   = _load_config()
+    chain = only or _model_chain(cfg, "gemini_models", "gemini_model", preferred, _load_models("gemini", _EMERGENCY_GEMINI))
+
+    def call(client, model):
+        return (client.models.generate_content(model=model, contents=contents).text or "").strip()
+
+    return _gemini_over_keys(call, chain, keys or _gemini_api_keys(), "")
 
 
 def generate_grounded_search(prompt: str, preferred: str | None = None) -> str:
     """Gemini-only grounded (google_search tool) generation — Groq has no
     web-grounding equivalent, so this always uses the Gemini chain. Callers
     (web_search.py) already fall back to DuckDuckGo if every model fails."""
-    from google import genai
-    key = _gemini_api_key()
-    if not key:
-        raise RuntimeError("No Gemini API key configured.")
-    cfg    = _load_config()
-    chain  = _model_chain(cfg, "gemini_models", "gemini_model", preferred, _load_models("gemini", _EMERGENCY_GEMINI))
-    client = genai.Client(api_key=key)
+    cfg   = _load_config()
+    chain = _model_chain(cfg, "gemini_models", "gemini_model", preferred, _load_models("gemini", _EMERGENCY_GEMINI))
 
-    last_err: Exception | None = None
-    for model in chain:
-        try:
-            response = client.models.generate_content(
-                model=model, contents=prompt,
-                config={"tools": [{"google_search": {}}], "automatic_function_calling": {"disable": True}},
-            )
-            text = "".join(
-                part.text for part in response.candidates[0].content.parts if getattr(part, "text", None)
-            ).strip()
-            if not text:
-                raise ValueError("empty response")
-            return text
-        except Exception as e:
-            last_err = e
-            if _gemini_is_auth_error(e):
-                print("[TextModel] Gemini API key rejected — skipping remaining Gemini models")
-                break
-            print(f"[TextModel] Gemini {model} (grounded) failed ({e}) — trying next")
-    raise last_err or RuntimeError("No Gemini models configured.")
+    def call(client, model):
+        response = client.models.generate_content(
+            model=model, contents=prompt,
+            config={"tools": [{"google_search": {}}], "automatic_function_calling": {"disable": True}},
+        )
+        text = "".join(part.text for part in response.candidates[0].content.parts
+                       if getattr(part, "text", None)).strip()
+        if not text:
+            raise ValueError("empty response")
+        return text
+
+    return _gemini_over_keys(call, chain, _gemini_api_keys(), " (grounded)")
 
 
 class _Response:
@@ -292,20 +320,13 @@ def generate_bulk(prompt: str, models: list[str] | None = None) -> str:
     gemma = models or [m for m in _load_models("gemini", _EMERGENCY_GEMINI) if m.startswith("gemma")]
     if not gemma:
         raise RuntimeError("No Gemma model configured for bulk jobs.")
-    from memory.config_manager import get_gemini_api_keys
-    keys = get_gemini_api_keys() or [_gemini_api_key()]
+    keys = _gemini_api_keys()
     # Start each call on the next key, so parallel workers spread over every
     # key's per-minute token limit instead of all queuing on the first one.
     global _bulk_turn
     with _bulk_lock:
         start, _bulk_turn = _bulk_turn, _bulk_turn + 1
-    last_err: Exception | None = None
-    for i in range(len(keys)):
-        try:
-            return _gemini_generate(prompt, None, only=gemma, key=keys[(start + i) % len(keys)])
-        except Exception as e:
-            last_err = e
-    raise last_err or RuntimeError("No Gemini API key configured.")
+    return _gemini_generate(prompt, None, only=gemma, keys=keys[start % max(1, len(keys)):] + keys[:start % max(1, len(keys))])
 
 
 def get_text_model(gemini_model: str | None = None, groq_model: str | None = None) -> TextModel:
