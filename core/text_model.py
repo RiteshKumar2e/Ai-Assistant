@@ -248,12 +248,12 @@ _bulk_turn = 0
 _bulk_lock = __import__("threading").Lock()
 
 
-def generate_bulk(prompt: str) -> str:
+def generate_bulk(prompt: str, models: list[str] | None = None) -> str:
     """For bulk background jobs (core/routing_trainer): only the Gemma models
     (14,400 req/day each). Never falls through to the Flash-tier or Groq
     models live actions depend on — when Gemma is rate-limited this raises
     and the caller backs off instead of eating those daily quotas."""
-    gemma = [m for m in _load_models("gemini", _EMERGENCY_GEMINI) if m.startswith("gemma")]
+    gemma = models or [m for m in _load_models("gemini", _EMERGENCY_GEMINI) if m.startswith("gemma")]
     if not gemma:
         raise RuntimeError("No Gemma model configured for bulk jobs.")
     from memory.config_manager import get_gemini_api_keys

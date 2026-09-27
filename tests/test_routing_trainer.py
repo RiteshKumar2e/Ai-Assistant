@@ -125,6 +125,20 @@ def test_parse_accepts_every_object_style_the_model_writes(blob):
     assert rt._parse(f"1 open_app {blob}", 1) == {1: ("open_app", {"app_name": "Notion"})}
 
 
+def test_parse_reads_args_inside_an_echoed_placeholder():
+    line = '1 unit_converter {json args: {"value": "98.6", "from_unit": "F"}}'
+    assert rt._parse(line, 1) == {1: ("unit_converter", {"value": "98.6", "from_unit": "F"})}
+
+
+def test_reply_that_drops_all_details_is_retried_not_graded(monkeypatch):
+    rt.corpus()
+    monkeypatch.setattr(rt, "_ask", _answer_with(lambda c: rt._by_cmd[c][0] + " {}"))
+    with pytest.raises(RuntimeError, match="dropped the arguments"):
+        rt.run_batch(DECLS, 100)
+    s = rt._read()
+    assert s["seen"] == 0 and s["confusions"] == {}
+
+
 def test_loose_obj_handles_js_literals():
     assert rt._loose_obj("{save: true, path: null, n: 5}") == {"save": True, "path": None, "n": 5}
 
@@ -203,17 +217,19 @@ def test_perfect_batch_advances_cursor_and_learns_nothing(monkeypatch):
     assert rt.format_routing_lessons() == ""
 
 
-def test_wrong_details_become_a_lesson_with_the_exact_call(monkeypatch):
+def test_wrong_details_become_a_plain_word_lesson(monkeypatch):
     rt.corpus()
 
-    def garble(cmd):   # right tool, every detail blanked out
+    def garble(cmd):   # right tool, a wrong value for every detail
         label, want = rt._by_cmd[cmd]
-        return f"{label} {{}}" if want else _perfect(cmd)
+        bad = {k.rstrip("?").split("|")[0]: "zzz" for k in want}
+        return f"{label} {json.dumps(bad)}"
 
     monkeypatch.setattr(rt, "_ask", _answer_with(garble))
     rt.run_batch(DECLS, 300)
     lessons = rt.format_routing_lessons()
-    assert "[TASK LESSONS" in lessons and "exactly right" in lessons
+    assert "[TASK LESSONS" in lessons and "exactly as the user said" in lessons
+    assert "{" not in lessons and '="' not in lessons   # plain words, never copyable call syntax
     assert rt._read()["tool_ok"] == rt._read()["seen"]
 
 
@@ -303,3 +319,21 @@ def test_train_waits_out_an_internet_outage(monkeypatch):
     monkeypatch.setattr(rt.time, "sleep", lambda s: None)
     rt.train(limit=50, size=25, log=lambda m: None)
     assert rt._read()["seen"] == 50
+
+
+def test_seed_exam_and_merged_lessons(tmp_path, monkeypatch):
+    from core import seed_generator as sg
+    seeds = tmp_path / "seed_tasks.jsonl"
+    seeds.write_text("\n".join(json.dumps({"cmd": f"seed cmd {i}", "label": "open_app",
+                                            "args": {"app_name": "~Notion"}}) for i in range(30)), encoding="utf-8")
+    monkeypatch.setattr(sg, "STORE", seeds)
+    rt.use_exam("seed")
+    monkeypatch.setattr(rt, "STATE_PATH", tmp_path / "seed_training.json")
+    try:
+        assert len(rt.corpus()) == 30
+        monkeypatch.setattr(rt, "_ask", _answer_with(lambda c: 'open_app {"app_name": "Word"}'))
+        rt.run_batch(DECLS, 30)
+        lessons = rt.format_routing_lessons()
+        assert 'app_name "Notion"' in lessons
+    finally:
+        rt.use_exam("core")

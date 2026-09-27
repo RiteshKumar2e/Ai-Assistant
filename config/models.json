@@ -49,9 +49,7 @@
     { "id": "openai/gpt-oss-20b",           "note": "Smaller/faster sibling of gpt-oss-120b, near-identical behavior. Second try." },
     { "id": "qwen/qwen3.8-27b",             "note": "Fastest observed of all candidates (~0.4s). Solid quality." },
     { "id": "openai/gpt-oss-safeguard-20b", "note": "Content-safety-tuned variant of gpt-oss-20b. Answers plain prompts cleanly; kept as a mid-chain fallback." },
-    { "id": "allam-2-7b",                   "note": "Small general-purpose model. Reliable last-resort before the agentic ones below." },
-    { "id": "groq/compound-mini",           "note": "Groq's lighter agentic/tool-use model. Answers cleanly for plain text." },
-    { "id": "groq/compound",                "note": "Groq's full agentic system — works, but tends to add unrequested commentary instead of a bare answer. Last resort." }
+    { "id": "allam-2-7b",                   "note": "Small general-purpose model. Reliable last resort." }
   ],
 
   "_excluded_from_gemini": [
@@ -69,6 +67,7 @@
     "canopylabs/orpheus-arabic-saudi and orpheus-v1-english — text-to-speech models.",
     "whisper-large-v3 and whisper-large-v3-turbo — speech-to-text models.",
     "llama-3.3-70b-versatile — RETIRED by Groq (confirmed 404 on 2026-09-16). Do not re-add without re-verifying it exists again.",
+    "groq/compound and groq/compound-mini — 404 on every call (checked 2026-09-27): retired by Groq, removed so the chain stops spending a request on them.",
     "This Groq key's full catalogue is exactly 13 models (GET /v1/models, checked 2026-09-17); 6 are the ones above, leaving these 7 as the entire usable set — there is no hidden larger catalogue to expand into."
   ]
 }

@@ -52,29 +52,52 @@ def _base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-STATE_PATH = _base_dir() / "memory" / "routing_training.json"
+# Two exams: "core" = the 20,000 template tasks (core/training_corpus),
+# "seed" = the cross-verified tasks core/seed_generator writes. Each keeps its
+# own progress file; the live prompt merges the lessons of both.
+EXAMS = {"core": "routing_training.json", "seed": "seed_training.json"}
+_exam = "core"
+STATE_PATH = _base_dir() / "memory" / EXAMS["core"]
 BATCH_SIZE = 100
 MAX_RETEST = 3000
 _lock = Lock()
 _inflight: set[int] = set()   # items a parallel worker is routing right now
 _corpus: list[tuple[str, str, dict]] | None = None
 _by_cmd: dict[str, tuple[str, dict]] = {}
+_fp: str | None = None
 _SELECTORS = ("action", "mode")   # the parameter that picks what a tool does (web_search uses mode)
 _LINE_RE = re.compile(r"^\W*(\d+)[.):\s-]+`?([a-z_]+)(?:\.([a-z_]+))?`?\s*(.*)$", re.I)
 
 
+def use_exam(name: str) -> None:
+    """Switch this process to the "core" or "seed" exam."""
+    global _exam, STATE_PATH, _corpus, _fp
+    _exam, _corpus, _fp = name, None, None
+    STATE_PATH = _base_dir() / "memory" / EXAMS[name]
+
+
 def corpus() -> list[tuple[str, str, dict]]:
-    global _corpus
+    global _corpus, _fp
     if _corpus is None:
-        _corpus = training_corpus.build()
+        if _exam == "seed":
+            from core import seed_generator
+            _corpus = [(t["cmd"], t["label"], t.get("args", {})) for t in seed_generator.load()]
+        else:
+            _corpus = training_corpus.build()
         _by_cmd.update({c: (l, a) for c, l, a in _corpus})
+        _fp = training_corpus.fingerprint(_corpus)
     return _corpus
+
+
+def _fingerprint() -> str:
+    corpus()
+    return _fp
 
 
 # ── State ────────────────────────────────────────────────────────────────────
 
 def _fresh() -> dict:
-    return {"fingerprint": training_corpus.fingerprint(corpus()), "cursor": 0, "round": 1,
+    return {"fingerprint": _fingerprint(), "cursor": 0, "round": 1,
             "seen": 0, "correct": 0, "tool_ok": 0, "args": [0, 0], "exec": [0, 0],
             "labels": {}, "confusions": {}, "wrong": {}, "exec_fail": [], "history": []}
 
@@ -82,7 +105,7 @@ def _fresh() -> dict:
 def _read() -> dict:
     try:
         s = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        if isinstance(s, dict) and s.get("fingerprint") == training_corpus.fingerprint(corpus()):
+        if isinstance(s, dict) and s.get("fingerprint") == _fingerprint():
             return s
     except Exception:
         pass
@@ -184,6 +207,8 @@ def _args_error(expected: dict, got: dict) -> str | None:
         optional = spec.endswith("?")
         alts = spec.rstrip("?").split("|")
         given = [got[a] for a in alts if a in got and str(got[a]).strip() != ""]
+        if len(given) > 1:   # the details may be split across the alternatives
+            given.append(" ".join(map(str, given)))
         if not given:
             if optional:
                 continue
@@ -221,6 +246,7 @@ def grade(expected: str, want_args: dict, command: str, got: str, got_args: dict
     return True, None, ""
 
 
+_FLAT_OBJ = re.compile(r"\{[^{}]*\}")
 _BARE_KEY = re.compile(r"([{,]\s*)([A-Za-z_]\w*)\s*:")
 _JS_WORDS = {"true": "True", "false": "False", "null": "None"}
 
@@ -249,6 +275,10 @@ def _parse(reply: str, n: int) -> dict[int, tuple[str, dict]]:
         rest, args = m.group(4) or "", {}
         if "{" in rest and "}" in rest:
             args = _loose_obj(rest[rest.index("{"): rest.rindex("}") + 1])
+            if not args:
+                # e.g. `{json args: {"value": 5}}` — the model echoing the
+                # format placeholder around the real (flat) args object.
+                args = next((o for o in map(_loose_obj, reversed(_FLAT_OBJ.findall(rest))) if o), {})
         args = args if isinstance(args, dict) else {}
         label = m.group(2).lower()
         act = m.group(3) or next((str(args.pop(k)) for k in _SELECTORS if k in args), "")
@@ -301,9 +331,13 @@ def _route(decls: list[dict], batch: list[int]) -> dict:
         f"Available tools:\n{_catalogue(decls)}\n"
         "- none: no tool — small talk, thanks, greetings, jokes, or general knowledge you can answer yourself.\n\n"
         f"{lessons}\n"
-        "Turn EACH numbered command below into the exact call JUDO should make. One line per command:\n"
-        "`<number> <tool>.<action> {json args}` (drop `.<action>` when the tool has no actions/modes list;\n"
-        "`<number> none {}` when no tool is needed). Put every detail the user gave into the args — names,\n"
+        "Turn EACH numbered command below into the exact call JUDO should make. One line per command: the\n"
+        "number, the tool (with `.action` when the tool has an actions/modes list), then the arguments as a\n"
+        "JSON object. For example:\n"
+        '7 send_message {"receiver": "Rahul", "message_text": "call me back"}\n'
+        "8 computer_settings.volume_up {}\n"
+        "9 none {}\n"
+        "Put every detail the user gave into the args — names,\n"
         "messages in the user's own words, paths as said (a bare name, never an invented full path), cities,\n"
         "numbers. Leave out anything they did not say. No other text.\n\n"
         f"{numbered}"
@@ -311,12 +345,20 @@ def _route(decls: list[dict], batch: list[int]) -> dict:
     picks = _parse(reply, len(batch))
     if len(picks) < len(batch) // 2:
         raise RuntimeError(f"unparseable router reply ({len(picks)}/{len(batch)} lines)")
+    # A reply whose args all went missing is a broken reply, not 50 mistakes —
+    # grading it would teach the live prompt lessons that are simply false.
+    needs = [i for i, k in enumerate(batch, 1)
+             if items[k][2] and i in picks and picks[i][0].split(".")[0] == items[k][1].split(".")[0]]
+    if len(needs) >= 5 and sum(1 for i in needs if picks[i][1]) < len(needs) / 2:
+        raise RuntimeError(f"router reply dropped the arguments ({len(needs)} tasks) — retrying")
 
     graded = {}
     for i, k in enumerate(batch, 1):   # run sandboxed tasks outside the state lock
         if i in picks:
             cmd, expected, want = items[k]
-            graded[i] = grade(expected, want, cmd, *picks[i])
+            # Real sandbox runs only on the core exam: its tasks name the sample
+            # files the sandbox is seeded with; seed tasks name any file at all.
+            graded[i] = grade(expected, want, cmd, *picks[i], execute=_exam == "core")
 
     ok = wrong = 0
     with _lock:
@@ -357,7 +399,10 @@ def _route(decls: list[dict], batch: list[int]) -> dict:
                     s["confusions"][old]["n"] -= 1
                 c = s["confusions"].setdefault(key, {"n": 0, "ex": []})
                 c["n"] += 1
+                if detail and key.endswith("|exec"):
+                    c["why"] = detail[:90]
                 c["ex"] = ([cmd] + [e for e in c["ex"] if e != cmd])[:3]
+                c["want"] = want   # the newest example's expected details, for the lesson text
                 if len(s["wrong"]) < MAX_RETEST or old is not None:
                     s["wrong"][str(k)] = key
         s["confusions"] = {k: v for k, v in s["confusions"].items() if v["n"] > 0}
@@ -373,35 +418,52 @@ def _pretty(label: str) -> str:
     return f"{tool} (action={act})" if act else tool
 
 
-def _call(label: str, args: dict) -> str:
-    tool, _, act = label.partition(".")
-    shown = {k.rstrip("?").split("|")[0]: v.lstrip("~#@") for k, v in args.items()}
-    if act:
-        shown = {"action": act, **shown}
-    return f"{tool}(" + ", ".join(f'{k}="{v}"' for k, v in shown.items()) + ")"
+def _requirement(spec: str, args: dict) -> str:
+    """One detail in plain words: 'receiver "Rahul"'. Plain text on purpose —
+    a lesson written like a call gets copied as the answer FORMAT."""
+    want = args.get(spec) or args.get(spec + "?") or ""
+    name = spec.split("|")[0]
+    return f'{name} "{want.lstrip("~#@")}"' if want else name
+
+
+def _all_confusions() -> dict:
+    """Recurring mistakes from every exam's progress file, merged. Read raw —
+    the lessons only need the counts and examples, not the corpus itself."""
+    merged: dict[str, dict] = {}
+    for fname in EXAMS.values():
+        try:
+            conf = json.loads((STATE_PATH.parent / fname).read_text(encoding="utf-8")).get("confusions", {})
+        except Exception:
+            continue
+        for k, v in conf.items():
+            m = merged.setdefault(k, {"n": 0, "ex": []})
+            m["n"] += v.get("n", 0)
+            m["ex"] = (m["ex"] + v.get("ex", []))[:3]
+            for extra in ("want", "why"):
+                if v.get(extra) and not m.get(extra):
+                    m[extra] = v[extra]
+    return merged
 
 
 def format_routing_lessons(limit: int = 15) -> str:
-    """Top recurring task failures as concrete sentence → exact call examples,
-    for the system prompt. Empty until the exam has found something to teach."""
-    corpus()
-    with _lock:
-        conf = _read()["confusions"]
-    top = sorted((v["n"], k, v["ex"]) for k, v in conf.items() if v["n"] >= 2)[::-1][:limit]
+    """Top recurring task failures as concrete sentence -> what to do, for the
+    system prompt. Empty until the exam has found something to teach."""
+    conf = _all_confusions()
+    top = sorted((v["n"], k, v["ex"], v.get("why", "")) for k, v in conf.items() if v["n"] >= 2)[::-1][:limit]
     lines = []
-    for _n, key, ex in top:
+    for _n, key, ex, why_run in top:
         if not ex:
             continue
         expected, why = key.split("|", 1)
-        _label, args = _by_cmd.get(ex[0], (expected, {}))
-        call = _call(expected, args)
+        args = conf[key].get("want") or _by_cmd.get(ex[0], (expected, {}))[1]
         if why.startswith("args:"):
-            lines.append(f'  - "{ex[0]}" → {call} — get {why[5:]} exactly right')
+            lines.append(f'  - "{ex[0]}" → {_pretty(expected)} with {_requirement(why[5:], args)} '
+                         f"exactly as the user said it")
         elif why == "exec":
-            lines.append(f'  - "{ex[0]}" → {call} — this failed when really run; give every detail in the '
-                         f'form the tool expects, names exactly as said, never an invented path')
+            lines.append(f'  - "{ex[0]}" → {_pretty(expected)} failed when really run ({why_run or "error"}) '
+                         f"— pass every detail the tool needs, in the form it expects")
         else:
-            lines.append(f'  - "{ex[0]}" → {call}, NOT {_pretty(why)}')
+            lines.append(f'  - "{ex[0]}" → use {_pretty(expected)}, NOT {_pretty(why)}')
     if not lines:
         return ""
     return ("[TASK LESSONS — learned from JUDO's own practice on 20,000 tasks; follow these]\n"
@@ -511,7 +573,10 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=3, help="batches in flight at once")
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--reset", action="store_true")
+    ap.add_argument("--exam", choices=list(EXAMS), default="core",
+                    help="core = 20,000 template tasks; seed = cross-verified tasks from core.seed_generator")
     a = ap.parse_args()
+    use_exam(a.exam)
     if a.reset:
         reset()
         print("Training progress reset.")
