@@ -50,8 +50,8 @@ button{font:inherit}
  border-bottom:1px solid __BORDER__}
 .brand{display:flex;align-items:baseline;gap:6px;font-size:22px;color:__SUB__}
 .brand b{font:500 22px 'Poppins','Segoe UI',sans-serif;letter-spacing:-.5px}
-.brand b span:nth-child(1){color:#4285F4}.brand b span:nth-child(2){color:#EA4335}
-.brand b span:nth-child(3){color:#FBBC05}.brand b span:nth-child(4){color:#34A853}
+.brand b span:nth-child(1){color:__J__}.brand b span:nth-child(2){color:__U__}
+.brand b span:nth-child(3){color:__D__}.brand b span:nth-child(4){color:__O__}
 .top .av{width:32px;height:32px;font-size:15px;margin-left:auto}
 .wrap{display:flex;max-width:1180px;margin:0 auto}
 nav{width:280px;padding:12px 0;position:sticky;top:64px;align-self:flex-start}

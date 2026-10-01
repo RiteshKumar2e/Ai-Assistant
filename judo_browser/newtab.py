@@ -271,8 +271,8 @@ header a:hover{text-decoration:underline}
 .a-manage{margin-top:10px;border-radius:24px}
 .r-row{cursor:default;font-weight:400}.r-row > span:not(.av){flex:1}.r-row:hover{background:__CARD__}
 .jlogo{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
- background:conic-gradient(#EA4335 0 25%,#FBBC05 0 50%,#34A853 0 75%,#4285F4 0)}
-.jlogo b{width:14px;height:14px;border-radius:50%;background:__CARD__;color:#4285F4;font:700 10px/14px 'Segoe UI';
+ background:conic-gradient(__J__ 0 25%,__U__ 0 50%,__D__ 0 75%,__O__ 0)}
+.jlogo b{width:14px;height:14px;border-radius:50%;background:__CARD__;color:__J__;font:700 10px/14px 'Segoe UI';
  text-align:center}
 .a-row .av{width:32px;height:32px;font-size:14px}
 .a-row small{display:block;color:__SUB__;font-size:12px;margin-top:1px;font-weight:400}
@@ -302,8 +302,8 @@ main{display:flex;flex-direction:column;align-items:center;padding-top:max(13vh,
  animation:judoSheen 7s ease-in-out infinite;animation-delay:calc(1.6s + var(--i) * .12s)}
 .logo span:hover{translate:0 -10px;scale:1.12}
 .logo.spin span{rotate:y 360deg}
-.l1{--c:#4285F4;--d:#1F5FC9;--i:0}.l2{--c:#EA4335;--d:#B3261E;--i:1}
-.l3{--c:#FBBC05;--d:#C48A00;--i:2}.l4{--c:#34A853;--d:#1E7E3A;--i:3}
+.l1{--c:__J__;--d:__JD__;--i:0}.l2{--c:__U__;--d:__UD__;--i:1}
+.l3{--c:__D__;--d:__DD__;--i:2}.l4{--c:__O__;--d:__OD__;--i:3}
 .on-dark .logo span{text-shadow:0 1px 0 var(--d),0 2px 0 var(--d),0 3px 0 var(--d),0 4px 0 var(--d),0 5px 0 var(--d),
   0 8px 4px rgba(0,0,0,.25),0 14px 30px rgba(0,0,0,.45)}
 .no-intro .logo span{animation:judoFloat 5.5s ease-in-out infinite;animation-delay:calc(var(--i) * .35s)}
@@ -685,6 +685,8 @@ Manage your JUDO Account</button>
 
 
 def _sub(template: str, values: dict) -> str:
+    """Fill __KEY__ placeholders — plus the JUDO logo colours (__J__, __JD__ … __O__, __OD__) everywhere."""
+    values = {**{k: v for (c, d), l in zip(theme.LOGO, "JUDO") for k, v in ((l, c), (l + "D", d))}, **values}
     for k, v in values.items():
         template = template.replace(f"__{k}__", v)
     return template
@@ -746,7 +748,7 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
                 + "".join(f'<div class="swatch {"sel" if cur_color == c.upper() else ""}" data-color="{c}" title="{n}" '
                           f'style="background:{c}"></div>' for n, c in theme.COLORS.items())
                 + f'<label class="swatch picker {"sel" if cur_color and cur_color not in [c.upper() for c in theme.COLORS.values()] else ""}"'
-                  f' title="Custom colour"><input type="color" id="pickColor" value="{cur_color or "#4285F4"}"></label>')
+                  f' title="Custom colour"><input type="color" id="pickColor" value="{cur_color or theme.LOGO[0][0]}"></label>')
     bgs = (f'<div class="bg {"sel" if not cur_bg else ""}" data-bg="" style="background:{t["toolbar"]}">No background</div>'
            + "".join(f'<div class="bg {"sel" if cur_bg == k else ""}" data-bg="{k}" style="background:{css}">'
                      f'<span class="nm">{n}</span></div>' for k, (n, css) in BACKGROUNDS.items())

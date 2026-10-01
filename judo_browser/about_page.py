@@ -30,15 +30,15 @@ body{margin:0;background:__BG__;color:__TEXT__;font:14px 'Segoe UI',Roboto,Arial
 main{max-width:760px;margin:0 auto;padding:48px 24px 64px}
 .hero{text-align:center}
 .logo{font:500 72px/1 'Poppins','Segoe UI',sans-serif;letter-spacing:-2px;display:inline-flex}
-.logo span:nth-child(1){color:#4285F4}.logo span:nth-child(2){color:#EA4335}
-.logo span:nth-child(3){color:#FBBC05}.logo span:nth-child(4){color:#34A853}
+.logo span:nth-child(1){color:__J__}.logo span:nth-child(2){color:__U__}
+.logo span:nth-child(3){color:__D__}.logo span:nth-child(4){color:__O__}
 .product{font:400 26px 'Segoe UI',sans-serif;color:__SUB__;margin-top:6px}
 .ver{margin:18px 0 4px;font-size:15px}
 .ver small{display:block;color:__SUB__;margin-top:4px}
 .by{display:inline-flex;align-items:center;gap:10px;margin-top:20px;padding:10px 20px;border-radius:24px;
  background:__CARD__;border:1px solid __BORDER__;font-size:15px}
 .by b{color:__ACCENT__}
-.heart{color:#EA4335}
+.heart{color:__U__}
 .card{background:__CARD__;border:1px solid __BORDER__;border-radius:12px;margin-top:24px;overflow:hidden}
 .card h2{font:500 16px 'Segoe UI',sans-serif;margin:0;padding:18px 24px 6px}
 .card p{margin:0;padding:6px 24px 18px;color:__SUB__;line-height:1.6}

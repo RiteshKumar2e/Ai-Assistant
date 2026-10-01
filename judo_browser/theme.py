@@ -63,6 +63,13 @@ PATHS = {
 }
 
 
+# JUDO's own colours ("JUDO Spectrum"): one per letter of the logo, J-U-D-O, each with the deeper
+# shade its 3D edge is drawn in. Used by the logo, the app icon and JUDO's pages.
+LOGO = (("#7B5CFF", "#5236D9"),   # J  violet
+        ("#FF4D8D", "#CC2464"),   # U  rose
+        ("#FFA62B", "#CC7A0A"),   # D  amber
+        ("#12C9B4", "#0A9584"))   # O  aqua
+
 # "Customize JUDO" colour themes, like Chrome's: one seed colour tints the whole frame.
 COLORS = {"Blue": "#4285F4", "Cool grey": "#8D9BAF", "Aqua": "#24A1C1", "Green": "#34A853",
           "Viridian": "#0E9F8A", "Citron": "#C0B42C", "Orange": "#F29900", "Apricot": "#E8845C",
@@ -133,8 +140,8 @@ def judo_icon() -> QIcon:
         pm.fill(Qt.GlobalColor.transparent)
         p = QPainter(pm)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        ring = QConicalGradient(size / 2, size / 2, 90)
-        for i, c in enumerate(("#EA4335", "#4285F4", "#34A853", "#FBBC05")):   # hard quarters, clockwise from top
+        ring = QConicalGradient(size / 2, size / 2, 90)   # Qt's conical gradient runs counter-clockwise
+        for i, (c, _) in enumerate(reversed(LOGO)):   # counter-clockwise O-D-U-J = J-U-D-O clockwise from the top
             ring.setColorAt(i / 4, QColor(c))
             ring.setColorAt((i + 1) / 4 - 0.0001, QColor(c))
         p.setPen(Qt.PenStyle.NoPen)
@@ -146,7 +153,7 @@ def judo_icon() -> QIcon:
         f = QFont("Segoe UI", -1, QFont.Weight.Black)
         f.setPixelSize(max(7, int(size * 0.52)))
         p.setFont(f)
-        p.setPen(QColor("#4285F4"))
+        p.setPen(QColor(LOGO[0][0]))
         p.drawText(pm.rect().adjusted(0, -int(size * 0.02), 0, 0), Qt.AlignmentFlag.AlignCenter, "J")
         p.end()
         out.addPixmap(pm)
