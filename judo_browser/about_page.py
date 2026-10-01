@@ -59,7 +59,7 @@ footer{text-align:center;color:__SUB__;font-size:12px;margin-top:32px;line-heigh
 """
 
 
-def page(t: dict, info: dict) -> str:
+def page(t: dict, info: dict, token: str = "") -> str:
     """`info`: chromium, qt, pyqt, python, os, sandbox (bool), profile (path), accounts (count)."""
     e = html.escape
     dark = t.get("dark", False)
@@ -74,8 +74,8 @@ def page(t: dict, info: dict) -> str:
     css = _sub(CSS, {"BG": t["toolbar"], "TEXT": t["text"], "SUB": t["sub"], "BORDER": t["border"],
                      "CARD": t["popup"] if dark else "#FFFFFF", "ACCENT": t["accent"], "HOVER": t["hover"]})
     btn = lambda c, label, **a: (f'<button class="btn" data-cmd="{c}" data-args=\'{e(json.dumps(a))}\'>{label}</button>')
-    js = f"""const CMD={json.dumps(CMD)}, DETAILS={json.dumps(text, ensure_ascii=False)};
-const send = o => console.log(CMD + JSON.stringify(o));
+    js = f"""const CMD={json.dumps(CMD)}, TOKEN={json.dumps(token)}, SRC='about', DETAILS={json.dumps(text, ensure_ascii=False)};
+const send = o => console.log(CMD + JSON.stringify(Object.assign({{t: TOKEN, src: SRC}}, o)));
 document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () =>
   send(Object.assign({{cmd: b.dataset.cmd}}, JSON.parse(b.dataset.args || '{{}}'))));
 document.querySelector('#copy').onclick = () => send({{cmd: 'about_copy', text: DETAILS}});"""

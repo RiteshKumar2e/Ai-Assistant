@@ -21,6 +21,7 @@ import html
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -85,13 +86,21 @@ class Page(QWebEnginePage):
         return self.win.new_tab(background=bg, blank=True).page()   # the engine loads the target itself
 
     def javaScriptConsoleMessage(self, level, message, line, source):
-        # pages' console noise stays out of JUDO's log; only the New Tab page talks to us this way
-        if (self.ntp or self.account_section or self.about) and message.startswith(newtab.CMD):
-            try:
-                cmd = json.loads(message[len(newtab.CMD):])
-            except ValueError:
-                return
-            QTimer.singleShot(0, lambda: self.win.ntp_command(self, cmd))
+        # pages' console noise stays out of JUDO's log; only JUDO's own pages talk to us this way.
+        # They carry this run's secret token, so a page reached by Back/Forward still works —
+        # and no website (which can't read it) can send commands.
+        if not message.startswith(newtab.CMD) or self.url().toString() not in ("", "about:blank"):
+            return
+        try:
+            cmd = json.loads(message[len(newtab.CMD):])
+        except ValueError:
+            return
+        if not isinstance(cmd, dict) or not secrets.compare_digest(str(cmd.get("t", "")), self.win.browser.token):
+            return
+        src = cmd.get("src")
+        self.ntp, self.about = src == "ntp", src == "about"
+        self.account_section = (self.account_section or "home") if src == "account" else ""
+        QTimer.singleShot(0, lambda: self.win.ntp_command(self, cmd))
 
     def _fullscreen(self, req):
         req.accept()
@@ -280,6 +289,7 @@ class Browser:
         self.windows: list[MainWindow] = []
         self.closed: list[str] = []             # for Ctrl+Shift+T
         self.ntp_undo: list = []                # last removed New Tab shortcut, for its Undo
+        self.token = secrets.token_hex(16)      # proves a console command came from JUDO's own pages
         self.theme = theme.resolve(self.settings["theme"], self.settings["theme_color"])
         self.apply_settings(True)
         # Device mode: re-theme the moment Windows switches between light and dark
@@ -777,7 +787,7 @@ class MainWindow(QMainWindow):
                     "python": platform.python_version(), "os": platform.platform(),
                     "sandbox": "QTWEBENGINE_DISABLE_SANDBOX" not in os.environ,
                     "accounts": len(self.browser.accounts["list"]), "profile": str(DATA)}
-            view.setHtml(about_page.page(self.t, info), QUrl("about:blank"))
+            view.setHtml(about_page.page(self.t, info, token=self.browser.token), QUrl("about:blank"))
         elif view.page().account_section:
             b = self.browser
             others = [a for a in b.accounts["list"] if a["id"] != self.account]
@@ -785,13 +795,13 @@ class MainWindow(QMainWindow):
                      "never_save": len(self.passwords.never), "offer_passwords": b.settings["offer_passwords"],
                      "sandbox": "QTWEBENGINE_DISABLE_SANDBOX" not in os.environ}
             view.setHtml(account_page.page(b.account(self.account), others, stats, self.t,
-                                           view.page().account_section), QUrl("about:blank"))
+                                           view.page().account_section, token=b.token), QUrl("about:blank"))
         elif view.page().ntp:
             b = self.browser
             others = [a for a in b.accounts["list"] if a["id"] != self.account]
             view.setHtml(newtab.page(b.settings, b.history, self.t, incognito=self.incognito, panel=panel, toast=toast,
                                      chromium=f"Chromium {qWebEngineChromiumVersion()}",
-                                     account=b.account(self.account), others=others),
+                                     account=b.account(self.account), others=others, token=b.token),
                          QUrl("about:blank"))
         else:
             view.load(url)

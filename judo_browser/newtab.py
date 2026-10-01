@@ -396,7 +396,7 @@ footer a:hover{text-decoration:underline}
 """
 
 JS = r"""
-const send = o => console.log(CMD + JSON.stringify(o));
+const send = o => console.log(CMD + JSON.stringify(Object.assign({t: TOKEN, src: SRC}, o)));
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -666,7 +666,7 @@ and your internet service provider.</p></div></body></html>"""
 
 def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = False,
          panel: bool = False, toast: str = "", chromium: str = "",
-         account: dict | None = None, others: list[dict] | None = None) -> str:
+         account: dict | None = None, others: list[dict] | None = None, token: str = "") -> str:
     """The New Tab page for the current settings and theme."""
     if incognito:
         return _incognito_page(t)
@@ -727,7 +727,7 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
                      "ACCENT": t["accent"], "BUBBLE": t["omni"] if not on_dark else "#FFFFFF",
                      "ON_ACCENT": on_accent, "ACCT_BG": "#28292C" if dark else "#E9EEF6",
                      "CARD": "#1B1B1C" if dark else "#FFFFFF", "ROW_HOVER": "#2C2D30" if dark else "#F1F3F4"})
-    js = (f"const CMD={json.dumps(CMD)}, ENGINE={json.dumps(engine)}, HISTORY={json.dumps(hist, ensure_ascii=False)},"
+    js = (f"const CMD={json.dumps(CMD)}, TOKEN={json.dumps(token)}, SRC='ntp', ENGINE={json.dumps(engine)}, HISTORY={json.dumps(hist, ensure_ascii=False)},"
           f" ICON_SEARCH={json.dumps(SVG['search'])}, ICON_HIST={json.dumps(SVG['history'])},"
           f" ACCOUNT={json.dumps({k: acct.get(k, '') for k in ('id', 'name', 'email', 'color', 'photo')})},"
           f" NEXT_COLOR={json.dumps(next_color)};" + JS)

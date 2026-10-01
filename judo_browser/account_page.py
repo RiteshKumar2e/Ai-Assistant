@@ -125,7 +125,7 @@ h2{font:400 26px 'Segoe UI',sans-serif;margin:8px 0 6px;text-align:center}
 """
 
 JS = r"""
-const send = o => console.log(CMD + JSON.stringify(o));
+const send = o => console.log(CMD + JSON.stringify(Object.assign({t: TOKEN, src: SRC}, o)));
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 function show(id) {
   $$('section').forEach(s => s.classList.toggle('show', s.id === id));
@@ -160,7 +160,7 @@ $('#addForm form').onsubmit = e => {
 """
 
 
-def page(account: dict, others: list[dict], stats: dict, t: dict, section: str = "home") -> str:
+def page(account: dict, others: list[dict], stats: dict, t: dict, section: str = "home", token: str = "") -> str:
     """The JUDO Account page. `stats`: history, bookmarks, passwords, never_save (counts),
     sandbox, offer_passwords (bools)."""
     section = section if section in SECTIONS else "home"
@@ -261,7 +261,7 @@ placeholder="you@example.com"><div class="actions"><button type="button" class="
     css = _sub(CSS, {"BG": t["toolbar"], "TEXT": t["text"], "SUB": t["sub"], "HOVER": t["hover"],
                      "BORDER": t["border"], "CARD": t["popup"] if dark else "#FFFFFF", "ACCENT": t["accent"],
                      "ACCENT_TEXT": t["accent"], "SELECT": t["select"], "ON_ACCENT": "#202124" if dark else "#FFFFFF"})
-    js = (f"const CMD={json.dumps(CMD)}, ACCOUNT={json.dumps({k: account.get(k, '') for k in ('id', 'name', 'email', 'color')})},"
+    js = (f"const CMD={json.dumps(CMD)}, TOKEN={json.dumps(token)}, SRC='account', ACCOUNT={json.dumps({k: account.get(k, '') for k in ('id', 'name', 'email', 'color')})},"
           f" NEXT_COLOR={json.dumps(COLORS[(len(others) + 1) % len(COLORS)])};" + JS)
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>JUDO Account</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500&display=swap" rel="stylesheet">

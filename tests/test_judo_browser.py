@@ -230,3 +230,16 @@ def test_about_page_says_who_made_it():
     page = about_page.page(theme.resolve("light"), info)
     assert "Made with" in page and "Ritesh" in page and __version__ in page and RELEASE in page
     assert "Chromium 140.0" in page and "Copy details" in page
+
+
+def test_judo_pages_sign_their_commands_with_the_run_token():
+    pytest.importorskip("PyQt6.QtWebEngineCore")
+    from judo_browser import about_page, account_page, newtab, theme
+    t = theme.resolve("light")
+    me = {"id": "default", "name": "R", "email": "", "color": "#1A73E8", "photo": ""}
+    info = {"chromium": "1", "qt": "1", "pyqt": "1", "python": "1", "os": "W", "sandbox": True, "accounts": 1, "profile": "x"}
+    stats = {"history": 0, "bookmarks": 0, "passwords": 0, "never_save": 0, "offer_passwords": True, "sandbox": True}
+    for html_, src in ((newtab.page(_ntp_settings(), [], t, account=me, token="tok123"), "ntp"),
+                       (account_page.page(me, [], stats, t, token="tok123"), "account"),
+                       (about_page.page(t, info, token="tok123"), "about")):
+        assert 'TOKEN="tok123"' in html_ and f"SRC='{src}'" in html_ and "{t: TOKEN, src: SRC}" in html_
