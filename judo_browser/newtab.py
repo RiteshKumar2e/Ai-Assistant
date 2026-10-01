@@ -224,6 +224,8 @@ SVG = {
     "camera": '<svg viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4zM9 2L7.17 4H4c-1.1 0-2 '
               '.9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5'
               ' 5 2.24 5 5-2.24 5-5 5z"/></svg>',
+    "remove": '<svg viewBox="0 0 24 24"><path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4'
+              'v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>',
     "logout": '<svg viewBox="0 0 24 24"><path d="M5 5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h7v-2H5V5zm16 7l-4-4v3H9v2h8v3'
               'l4-4z"/></svg>',
     "check": '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
@@ -267,6 +269,7 @@ header a:hover{text-decoration:underline}
 .a-group .a-row:last-child{border-radius:4px 4px 24px 24px}
 .a-row:hover{background:__ROW_HOVER__}
 .a-manage{margin-top:10px;border-radius:24px}
+.r-row{cursor:default;font-weight:400}.r-row span{flex:1}.r-row:hover{background:__CARD__}
 .jlogo{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
  background:conic-gradient(#EA4335 0 25%,#FBBC05 0 50%,#34A853 0 75%,#4285F4 0)}
 .jlogo b{width:14px;height:14px;border-radius:50%;background:__CARD__;color:#4285F4;font:700 10px/14px 'Segoe UI';
@@ -493,7 +496,14 @@ $('#avatarBtn').onclick = () => { menu.classList.remove('show'); apps.classList.
 $('#acctClose').onclick = () => acct.classList.remove('show');
 $('#aPhoto').onclick = () => send({cmd: 'account_photo'});
 $$('[data-switch]').forEach(b => b.onclick = () => { hidePopups(); send({cmd: 'account_switch', id: b.dataset.switch}); });
-$('#aSignout').onclick = () => { hidePopups(); send({cmd: 'account_signout'}); };
+$('#aSignout').onclick = () => { hidePopups(); send({cmd: 'account_signout_all'}); };
+const rm = $('#rmodal'), rOne = $('#aRemoveOne');
+if (rOne) rOne.onclick = () => { hidePopups(); rm.classList.add('show'); };
+$('#rDone').onclick = () => rm.classList.remove('show');
+rm.addEventListener('mousedown', e => { if (e.target === rm) rm.classList.remove('show'); });
+$$('[data-remove]').forEach(b => b.onclick = e => {
+  e.preventDefault(); rm.classList.remove('show'); send({cmd: 'account_remove', id: b.dataset.remove});
+});
 const am = $('#amodal');
 let amode = 'edit', acolor = ACCOUNT.color;
 function paintColors() { $$('[data-acolor]').forEach(x => x.classList.toggle('sel', x.dataset.acolor === acolor)); }
@@ -581,7 +591,7 @@ const undo = $('#undo'); if (undo) undo.onclick = () => send({cmd: 'undo'});
 const toast = $('#toast'); if (toast.classList.contains('show')) setTimeout(() => toast.classList.remove('show'), 8000);
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { hidePopups(); panel.classList.remove('show'); modal.classList.remove('show');
-                            am.classList.remove('show'); }
+                            am.classList.remove('show'); rm.classList.remove('show'); }
 });
 """
 
@@ -594,6 +604,12 @@ def _avatar(acct: dict, cls: str, attrs: str = "") -> str:
 
 
 def _account_popup(acct: dict, others: list[dict]) -> str:
+    removable = [a for a in [acct, *others] if a["id"] != "default"]   # the default account keeps the original data
+    remove_rows = "".join(f'<div class="a-row r-row">{_avatar(a, "")}<span>{html.escape(a["name"])}<small>'
+                          f'{html.escape(a["email"] or "JUDO Account")}</small></span><button class="btn danger" '
+                          f'data-remove="{html.escape(a["id"])}">Remove</button></div>' for a in removable)
+    remove_btn = (f'<button class="a-row" id="aRemoveOne"><span class="a-icon">{SVG["remove"]}</span>'
+                  f'Remove an account</button>' if removable else "")
     first = html.escape((acct["name"] or "there").split()[0])
     rows = "".join(f'<button class="a-row" data-switch="{html.escape(o["id"])}" title="Switch to {html.escape(o["name"])}">'
                    f'{_avatar(o, "")}<span>{html.escape(o["name"])}<small>{html.escape(o["email"] or "JUDO Account")}'
@@ -608,7 +624,8 @@ def _account_popup(acct: dict, others: list[dict]) -> str:
 <div class="a-hi">Hi, {first}!</div></div>
 <div class="a-group">{rows}
 <button class="a-row" id="aAdd"><span class="a-icon">{SVG["add"]}</span>Add another account</button>
-<button class="a-row" id="aSignout"><span class="a-icon">{SVG["logout"]}</span>Sign out of all websites</button></div>
+{remove_btn}
+<button class="a-row" id="aSignout"><span class="a-icon">{SVG["logout"]}</span>Sign out of all accounts</button></div>
 <button class="a-row a-manage" id="aManage"><span class="a-icon"><span class="jlogo"><b>J</b></span></span>
 Manage your JUDO Account</button>
 <div class="a-foot">Kept only on this PC · <a data-open="settings">Settings</a></div></div>
@@ -620,7 +637,11 @@ Manage your JUDO Account</button>
 <button type="button" class="btn" id="aPhotoDel">Remove picture</button></div>
 <div class="actions"><button type="button" class="btn danger" id="aRemove">Remove account</button>
 <button type="button" class="btn" id="aCancel">Cancel</button>
-<button type="submit" class="btn primary" id="aSave">Save</button></div></form></div>"""
+<button type="submit" class="btn primary" id="aSave">Save</button></div></form></div>
+<div id="rmodal" class="modal"><form><h4>Remove an account</h4>
+<p style="color:inherit;opacity:.75;margin:0 0 12px">The account's windows close. Its site data stays on this PC.</p>
+<div class="a-group">{remove_rows}</div>
+<div class="actions"><button type="button" class="btn" id="rDone">Done</button></div></form></div>"""
 
 
 def _sub(template: str, values: dict) -> str:

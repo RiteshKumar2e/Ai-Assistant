@@ -43,6 +43,9 @@ html,body{margin:0;height:100%}
 body{background:__BG__;color:__TEXT__;font:14px 'Segoe UI',Roboto,Arial,sans-serif}
 svg{width:20px;height:20px;fill:currentColor;flex:none}
 button{font:inherit}
+.av{border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:500;overflow:hidden;flex:none;
+ font-family:'Segoe UI',sans-serif}
+.av img{width:100%;height:100%;object-fit:cover}
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;height:64px;padding:0 20px;background:__BG__;
  border-bottom:1px solid __BORDER__}
 .brand{display:flex;align-items:baseline;gap:6px;font-size:22px;color:__SUB__}

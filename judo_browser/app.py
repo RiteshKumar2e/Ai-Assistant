@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLi
                              QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QTabBar, QToolButton,
                              QVBoxLayout, QWidget, QWidgetAction)
 
-from judo_browser import account_page, accounts, dialogs, newtab, passwords, theme
+from judo_browser import about_page, account_page, accounts, dialogs, newtab, passwords, theme
 from judo_browser.app_data import DATA, SEARCH_ENGINES, load, load_settings, save
 
 HOME_URL = "judo:newtab"
@@ -75,6 +75,7 @@ class Page(QWebEnginePage):
         self.win = win
         self.ntp = False                       # showing JUDO's New Tab page (set by MainWindow.load)
         self.account_section = ""              # showing the JUDO Account page: its section, else ""
+        self.about = False                     # showing About JUDO Browser
         self.fullScreenRequested.connect(self._fullscreen)
         if hasattr(self, "permissionRequested"):          # Qt >= 6.8
             self.permissionRequested.connect(self._permission)
@@ -85,7 +86,7 @@ class Page(QWebEnginePage):
 
     def javaScriptConsoleMessage(self, level, message, line, source):
         # pages' console noise stays out of JUDO's log; only the New Tab page talks to us this way
-        if (self.ntp or self.account_section) and message.startswith(newtab.CMD):
+        if (self.ntp or self.account_section or self.about) and message.startswith(newtab.CMD):
             try:
                 cmd = json.loads(message[len(newtab.CMD):])
             except ValueError:
@@ -407,6 +408,8 @@ class Browser:
                     w.load(QUrl(HOME_URL), v, panel=mine and panel, toast=toast if mine else "")
                 elif v.page().account_section:
                     w.load(QUrl(f"{account_page.URL}#{v.page().account_section}"), v)
+                elif v.page().about:
+                    w.load(QUrl(about_page.URL), v)
 
     # history / bookmarks
     def record(self, url: str, title: str) -> None:
@@ -766,7 +769,16 @@ class MainWindow(QMainWindow):
         view.page().ntp = url.toString() == HOME_URL
         view.page().account_section = (url.fragment() or "home") if url.toString(
             QUrl.UrlFormattingOption.RemoveFragment) == account_page.URL and not self.incognito else ""
-        if view.page().account_section:
+        view.page().about = url.toString() == about_page.URL
+        if view.page().about:
+            from PyQt6.QtCore import PYQT_VERSION_STR, QT_VERSION_STR
+            import platform
+            info = {"chromium": qWebEngineChromiumVersion(), "qt": QT_VERSION_STR, "pyqt": PYQT_VERSION_STR,
+                    "python": platform.python_version(), "os": platform.platform(),
+                    "sandbox": "QTWEBENGINE_DISABLE_SANDBOX" not in os.environ,
+                    "accounts": len(self.browser.accounts["list"]), "profile": str(DATA)}
+            view.setHtml(about_page.page(self.t, info), QUrl("about:blank"))
+        elif view.page().account_section:
             b = self.browser
             others = [a for a in b.accounts["list"] if a["id"] != self.account]
             stats = {"history": len(b.history), "bookmarks": len(b.bookmarks), "passwords": len(self.passwords.items),
@@ -789,6 +801,9 @@ class MainWindow(QMainWindow):
         if self.incognito:
             return
         b = self.browser
+        if cmd.get("cmd") == "about_copy":
+            QApplication.clipboard().setText(str(cmd.get("text", ""))[:4000])
+            return self.flash("Copied version details")
         if str(cmd.get("cmd", "")).startswith("account_"):
             return self.account_command(cmd, page)
         effect = newtab.apply(b.settings, cmd, b.ntp_undo)
@@ -834,6 +849,10 @@ class MainWindow(QMainWindow):
         v = self.view()
         if v:
             self._set_title(v, v.title())
+
+    def about(self) -> None:
+        """⋮ → About JUDO Browser: a page like Chrome's, in a new tab."""
+        self.load(QUrl(about_page.URL), self.new_tab(blank=True))
 
     def account_page(self, section: str = "home") -> None:
         """Manage your JUDO Account: a new tab, like Google's account page."""
@@ -890,17 +909,31 @@ class MainWindow(QMainWindow):
             b.account(self.account)["photo"] = ""
             b.save_accounts()
         elif c == "account_remove":
-            acct = b.account(self.account)
-            if self.account == "default" or QMessageBox.question(
+            target = str(cmd.get("id") or self.account)
+            if target not in {a["id"] for a in data["list"]}:
+                return
+            acct = b.account(target)
+            if target == "default" or QMessageBox.question(
                     self, "Remove account", f"Remove {acct['name']} from JUDO Browser?\n\nIts windows close. "
                     "Its saved site data stays on this PC.") != QMessageBox.StandardButton.Yes:
                 return
-            if accounts.remove(data, self.account):
+            if accounts.remove(data, target):
                 b.save_accounts()
                 for w in [x for x in b.windows if x.account == acct["id"]]:
                     w.close()
                 if not b.windows:
                     b.new_window(account="default")
+        elif c == "account_signout_all":
+            if QMessageBox.question(self, "Sign out of all accounts",
+                                    "Sign out of all websites in every JUDO Account?\n\nCookies and site logins "
+                                    "are cleared; history, bookmarks and saved passwords stay.") \
+                    != QMessageBox.StandardButton.Yes:
+                return
+            for a in data["list"]:
+                p = b.profile_for(a["id"])
+                p.cookieStore().deleteAllCookies()
+                p.clearHttpCache()
+            self.flash("Signed out of all accounts")
         elif c == "account_signout":
             if QMessageBox.question(self, "Sign out", "Sign out of all websites in this account?\n\n"
                                     "Cookies and site logins are cleared; history, bookmarks and saved "
@@ -922,7 +955,8 @@ class MainWindow(QMainWindow):
                     "judo://history": self.history, "chrome://history": self.history,
                     "judo://downloads": self.downloads, "chrome://downloads": self.downloads,
                     "judo://bookmarks": self.bookmarks, "chrome://bookmarks": self.bookmarks,
-                    "judo://account": self.account_page}
+                    "judo://account": self.account_page, "judo://about": self.about,
+                    "chrome://settings/help": self.about}
         if text.lower() in internal:
             return internal[text.lower()]()
         self.load(to_url(text))
@@ -977,6 +1011,7 @@ class MainWindow(QMainWindow):
         if u.toString() not in ("", "about:blank"):
             v.page().ntp = False                 # navigated away from the New Tab page
             v.page().account_section = ""
+            v.page().about = False
         if v is self.view():
             self._sync_omnibox(v)
         self.browser.session_changed()
@@ -1214,8 +1249,7 @@ class MainWindow(QMainWindow):
         m.addAction("Customize JUDO", self.customize)
         m.addAction("JUDO Account", self.account_page)
         m.addAction("Settings", self.settings)
-        m.addAction("About JUDO Browser", lambda: QMessageBox.about(
-            self, "About JUDO Browser", f"JUDO Browser\nChromium {qWebEngineChromiumVersion()}"))
+        m.addAction("About JUDO Browser", self.about)
         m.addSeparator()
         m.addAction("Exit", QApplication.quit)
         return m
