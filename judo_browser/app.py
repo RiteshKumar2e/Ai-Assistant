@@ -21,6 +21,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -1157,16 +1158,42 @@ class MainWindow(QMainWindow):
         super().closeEvent(e)
 
 
+_SANDBOX_SIDS = ("S-1-5-32-545", "S-1-15-2-1", "S-1-5-12")   # Users, ALL APPLICATION PACKAGES, RESTRICTED
+
+
+def sandbox_ready() -> bool:
+    """The sandboxed page process runs on a restricted token that can only read
+    files Users/RESTRICTED may read. Qt installed inside the user profile (a
+    per-user Python) is readable by the user alone, so the renderer can't load
+    its DLLs (exit 0xC0000135) and every page stays blank. Grant those read
+    access once — what Chrome's own installer does for its folder.
+    False when that can't be done (the browser then runs unsandboxed)."""
+    if sys.platform != "win32":
+        return True
+    from PyQt6.QtCore import QLibraryInfo
+    exe = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.LibraryExecutablesPath)) / "QtWebEngineProcess.exe"
+    try:
+        import win32security
+        dacl = win32security.GetFileSecurity(str(exe), win32security.DACL_SECURITY_INFORMATION).GetSecurityDescriptorDacl()
+        have = {win32security.ConvertSidToStringSid(dacl.GetAce(i)[-1]) for i in range(dacl.GetAceCount())}
+        if all(sid in have for sid in _SANDBOX_SIDS):
+            return True
+    except Exception:
+        pass
+    print("Preparing the Chromium sandbox (one time)…")
+    r = subprocess.run(["icacls", str(exe.parent.parent), "/grant", *[f"*{sid}:(OI)(CI)(RX)" for sid in _SANDBOX_SIDS],
+                        "/T", "/C", "/Q"], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return r.returncode == 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv if argv is None else argv
     from judo_browser import client
     if client.alive():   # one browser per profile: hand the URL to the running one instead
         client.send("new_tab" if len(argv) > 1 else "focus", {"url": argv[1]} if len(argv) > 1 else {})
         return 0
-    if not load_settings()["sandbox"]:
-        # On this PC the sandboxed renderer can't load its DLLs (exit 0xC0000135) and every page
-        # stays blank; Settings → Advanced turns it back on to re-test.
-        os.environ["QTWEBENGINE_DISABLE_SANDBOX"] = "1"
+    if not (load_settings()["sandbox"] and sandbox_ready()):
+        os.environ["QTWEBENGINE_DISABLE_SANDBOX"] = "1"    # Settings → Advanced, or Qt not readable to it
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(argv)
     app.setApplicationName("JUDO Browser")

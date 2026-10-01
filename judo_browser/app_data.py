@@ -23,7 +23,8 @@ DEFAULT_SETTINGS = {
     "ask_download_location": False,
     "download_dir": "",                # empty = the user's Downloads folder
     "offer_passwords": True,
-    "sandbox": False,                  # Chromium renderer sandbox (off: renderer DLL load fails on this PC)
+    "sandbox": True,                   # Chromium renderer sandbox (app.sandbox_ready makes Qt readable to it)
+    "sandbox_fixed": True,             # marks settings saved after the sandbox fix (see load_settings)
     "zoom": {},                        # host -> zoom factor, remembered per site like Chrome
     "window": {},                      # last geometry
 }
@@ -49,5 +50,9 @@ def save(name: str, value) -> None:
 
 def load_settings() -> dict:
     s = dict(DEFAULT_SETTINGS)
-    s.update(load("settings.json", {}))
+    stored = load("settings.json", {})
+    if not stored.get("sandbox_fixed"):
+        stored.pop("sandbox", None)    # older builds saved "off" because the sandbox couldn't start then
+    s.update(stored)
+    s["sandbox_fixed"] = True
     return s

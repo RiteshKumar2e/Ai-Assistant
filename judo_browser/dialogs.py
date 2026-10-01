@@ -259,9 +259,8 @@ class Settings(QDialog):
         self.sandbox = QCheckBox("Use the Chromium sandbox (restart needed)")
         self.sandbox.setChecked(s["sandbox"])
         al.addWidget(self.sandbox)
-        al.addWidget(QLabel("The sandbox isolates web pages from the computer. On this PC the sandboxed page "
-                            "process fails to start, so it is off by default — turn it on to test after "
-                            "Windows/Python updates.", wordWrap=True))
+        al.addWidget(QLabel("The sandbox isolates web pages from the computer, like Chrome. Keep it on; turn it "
+                            "off only if pages stay blank.", wordWrap=True))
         al.addStretch(1)
         tabs.addTab(a, "Advanced")
 

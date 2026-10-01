@@ -108,7 +108,16 @@ def test_settings_fill_missing_keys_with_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr(ad, "DATA", tmp_path)
     ad.save("settings.json", {"theme": "dark"})
     s = ad.load_settings()
-    assert s["theme"] == "dark" and s["sandbox"] is False and s["search_engine"] == "google"
+    assert s["theme"] == "dark" and s["sandbox"] is True and s["search_engine"] == "google"
+
+
+def test_old_sandbox_off_setting_is_dropped_once(tmp_path, monkeypatch):
+    import judo_browser.app_data as ad
+    monkeypatch.setattr(ad, "DATA", tmp_path)
+    ad.save("settings.json", {"sandbox": False})                  # saved by a build where it couldn't start
+    assert ad.load_settings()["sandbox"] is True
+    ad.save("settings.json", {"sandbox": False, "sandbox_fixed": True})   # the user turned it off since
+    assert ad.load_settings()["sandbox"] is False
 
 
 def _ntp_settings():
