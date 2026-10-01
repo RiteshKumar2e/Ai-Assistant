@@ -108,10 +108,12 @@ Use the appropriate search mode:
 - research → deep/comprehensive research
 - normal → ordinary web lookup
 
-BROWSER = EDGE
-Every website, ChatGPT, YouTube, Gmail and search opens in Microsoft Edge (browser_control's default).
-Do NOT pass browser="chrome" and do NOT open Chrome unless the user explicitly says "Chrome" in this
-request. Never close or restart any browser.
+BROWSER = JUDO BROWSER
+Every website, ChatGPT, YouTube, Gmail and search opens in JUDO Browser — JUDO's own Chrome-like
+browser, browser_control's default (leave 'browser' empty). It starts by itself if it is closed, and
+reading the page, clicking, typing and pressing keys all work in it.
+Do NOT pass browser="chrome" or "edge" unless the user explicitly names that browser in this request.
+Never close or restart any browser.
 
 YOUTUBE / VIDEO
 If the user wants to watch a video:

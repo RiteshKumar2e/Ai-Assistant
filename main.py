@@ -27,6 +27,11 @@ if _platform.system() == "Windows":
 # Reconfiguring costs nothing and makes the app start the same way in every
 # locale. `errors="replace"` is the belt and braces — a console that genuinely
 # cannot render a glyph shows a box instead of killing the process.
+import os as _os
+# Qt logs one "OpenType support missing for <font>, script 11" line per system
+# font on first paint of Devanagari text — harmless noise, not an error.
+_os.environ.setdefault("QT_LOGGING_RULES", "qt.text.font.db=false")
+
 import sys as _sys
 for _stream in (_sys.stdout, _sys.stderr):
     try:
@@ -362,6 +367,15 @@ class _ReconnectSignal(Exception):
     def __init__(self, keep_context: bool = True):
         super().__init__()
         self.keep_context = keep_context
+
+
+def _is_server_hiccup(exc: BaseException) -> bool:
+    """Gemini Live closing with 1011 (server internal error) — possibly wrapped
+    in the TaskGroup's exception group."""
+    if isinstance(exc, BaseExceptionGroup):
+        return any(_is_server_hiccup(sub) for sub in exc.exceptions)
+    text = str(exc)
+    return "1011" in text and ("Internal error" in text or "internal error" in text)
 
 
 def _is_reconnect_signal(exc: BaseException) -> bool:
@@ -1309,8 +1323,9 @@ class JudoLive:
                             function_responses=fn_responses
                         )
         except Exception as e:
-            print(f"[JUDO] ❌ Recv: {e}")
-            traceback.print_exc()
+            if not _is_server_hiccup(e):
+                print(f"[JUDO] ❌ Recv: {e}")
+                traceback.print_exc()
             raise
 
     async def _play_audio(self):
@@ -1894,6 +1909,23 @@ class JudoLive:
                     continue
 
                 err_str = str(e)
+                if _is_server_hiccup(e):
+                    # Gemini Live's own "1011 Internal error": server-side and
+                    # transient. Reconnect at once, conversation kept — but a
+                    # second one within a minute means the resumed session
+                    # itself is broken, so start clean instead of looping on it.
+                    now = time.monotonic()
+                    self._hiccups = [t for t in getattr(self, "_hiccups", []) if now - t < 60] + [now]
+                    fresh = len(self._hiccups) >= 2 and self._resume_handle is not None
+                    if fresh:
+                        self._resume_handle = None
+                        self._hiccups = []
+                    print(f"[JUDO] ⚠️ Gemini server hiccup (1011) — reconnecting"
+                          + (" with a fresh session" if fresh else ", conversation kept"))
+                    self.ui.write_log("SYS: Gemini had a server hiccup — reconnecting"
+                                      + (" (new session)." if fresh else "…"))
+                    self._conn_backoff = 1
+                    continue
                 print(f"[JUDO] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 

@@ -72,3 +72,9 @@ screenshots/
 
 # Trained router model (download from Kaggle)
 models/
+
+# Voice cloning: notebooks carry the reference voice; demo clips and the voice itself stay local
+voice_training/*.ipynb
+voice_training/*.zip
+voice_demo/
+judo.mp3

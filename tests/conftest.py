@@ -8,6 +8,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
+@pytest.fixture(autouse=True)
+def no_real_judo_browser(monkeypatch):
+    """browser_control sends to JUDO Browser first and would LAUNCH it — no
+    test may open a real window. Tests of that routing fake the client."""
+    import actions.browser_control as bc
+    monkeypatch.setattr(bc, "_judo_browser_default", lambda: False)
+
+
 # ── Agent test doubles ───────────────────────────────────────────────────────
 class ScriptedLLM:
     """Stands in for the model. `plan` answers the planner prompt; `actions` are

@@ -1049,6 +1049,21 @@ def browser_control(
         _log(player, result)
         return result
 
+    # ── JUDO Browser first ──
+    # With no browser named (or "judo"), actions go to JUDO's own browser
+    # (judo_browser/), started on demand. It answers None for anything it
+    # can't do, and any failure falls through to the Edge path below.
+    if browser in (None, "judo", "judo browser") and _judo_browser_default():
+        try:
+            from judo_browser import client as judo_client
+            r = judo_client.send(action, params)
+            if r is not None:
+                _log(player, r)
+                return r
+        except Exception as e:
+            print(f"[Browser] JUDO Browser unavailable ({e}) — using Edge")
+        browser = None if browser in ("judo", "judo browser") else browser
+
     # ── Every action drives ONE browser: the user's actual, already-open one ──
     # go_to / search / new_tab used to open natively (a separate, uncontrolled
     # window) while click/type attached automation to a second, isolated
@@ -1135,6 +1150,15 @@ def browser_control(
     return result
 
 
+def _judo_browser_default() -> bool:
+    """config/api_keys.json "default_browser": "judo" (default) or "edge"."""
+    try:
+        cfg = json.loads((Path(__file__).resolve().parent.parent / "config" / "api_keys.json").read_text(encoding="utf-8"))
+        return str(cfg.get("default_browser", "judo")).lower() == "judo"
+    except Exception:
+        return True
+
+
 def _drive_open_window(browser: str, action: str, p: dict) -> str | None:
     """No CDP: do the action on the user's open window via UI Automation.
     None → UIA can't do this action / isn't available (caller reports why)."""
@@ -1164,7 +1188,7 @@ def _log(player, text: str):
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "browser_control",
-    "description": "Controls the web browser (Edge by default). Use for: opening ANY website or URL ('YouTube kholo', 'open chatgpt', 'gmail kholo', 'amazon.in pe jao'), showing search results in the browser, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Every action — including plain go_to/search — runs in the user's own already-open browser (real profile, logged-in accounts, extensions); it never opens a second, separate, logged-out browser window, and it NEVER closes, kills or restarts the user's browser. go_to/search/new_tab open as new tabs in the window that is already open. go_to a site that already has an open tab (e.g. chatgpt.com) switches to that tab. switch_tab (target = words from the tab title, e.g. 'ChatGPT') brings an open tab to the front. Typing, clicking, pressing keys and reading the page work on the open window (UI Automation on Windows when the browser has no debug port); if an action can't be done the tool says so — report that honestly, never retry by closing the browser. JUDO's browser is Microsoft Edge: leave 'browser' empty to use it (ChatGPT, GitHub, everything). Only pass 'browser' when the user explicitly names a different one (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
+    "description": "Controls the web browser (JUDO Browser by default). Use for: opening ANY website or URL ('YouTube kholo', 'open chatgpt', 'gmail kholo', 'amazon.in pe jao'), showing search results in the browser, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Every action — including plain go_to/search — runs in the user's own already-open browser (real profile, logged-in accounts, extensions); it never opens a second, separate, logged-out browser window, and it NEVER closes, kills or restarts the user's browser. go_to/search/new_tab open as new tabs in the window that is already open. go_to a site that already has an open tab (e.g. chatgpt.com) switches to that tab. switch_tab (target = words from the tab title, e.g. 'ChatGPT') brings an open tab to the front. Typing, clicking, pressing keys and reading the page work on the open window (UI Automation on Windows when the browser has no debug port); if an action can't be done the tool says so — report that honestly, never retry by closing the browser. JUDO's browser is JUDO Browser (its own Chrome-like browser): leave 'browser' empty to use it (ChatGPT, GitHub, Gmail, everything) — it starts by itself if closed, and reading the page, clicking, typing and pressing keys all work in it. Only pass 'browser' when the user explicitly names a different one (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
