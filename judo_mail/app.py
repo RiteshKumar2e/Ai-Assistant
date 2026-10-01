@@ -11,7 +11,6 @@ All network work runs on one background thread so the window never freezes.
 from __future__ import annotations
 
 import html
-import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -68,13 +67,12 @@ class MailPage(QWebEnginePage):
 
 
 def _open_link(url: str) -> None:
+    """Links open in JUDO Browser only — never the system default (Edge/Chrome)."""
     try:
         from judo_browser import client
-        if client.send("new_tab", {"url": url}) is not None:
-            return
-    except Exception:
-        pass
-    os.startfile(url)
+        client.send("new_tab", {"url": url})
+    except Exception as e:
+        print(f"[Mail] JUDO Browser could not open {url}: {e}")
 
 
 def _plain(markup: str) -> str:

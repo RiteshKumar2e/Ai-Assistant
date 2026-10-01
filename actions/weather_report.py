@@ -21,7 +21,7 @@ def weather_action(
     url           = f"https://www.google.com/search?q={quote_plus(search_query)}"
 
     try:
-        from actions.browser_control import open_in_browser   # JUDO's browser (Edge), never the system default
+        from actions.browser_control import open_in_browser   # JUDO Browser, never Edge/Chrome or the system default
         if not open_in_browser(url):
             raise RuntimeError("no browser executable found")
     except Exception as e:

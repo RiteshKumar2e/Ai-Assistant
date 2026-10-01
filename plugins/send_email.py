@@ -59,11 +59,6 @@ PLUGIN = {
                 "description": "Sender's Gmail address, only needed if multiple "
                                 "Google accounts are signed in to the browser",
             },
-            "browser": {
-                "type": "STRING",
-                "description": "chrome | edge | brave | vivaldi | opera — omit to "
-                                "use whichever browser is already active",
-            },
         },
         "required": ["to"],
     },
@@ -76,7 +71,6 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     subject = str(p.get("subject", "")).strip()
     body = str(p.get("body", "")).strip()
     account = str(p.get("account", "")).strip() or get_plugin_setting(_NAMESPACE, "default_account", "")
-    browser = str(p.get("browser", "")).strip() or None
 
     if not to:
         return "Please tell me who to send the email to."
@@ -90,7 +84,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
 
     url = _compose_url(to, subject, body, account)
 
-    nav = browser_control({"action": "go_to", "url": url, "browser": browser}, player=player)
+    nav = browser_control({"action": "new_tab", "url": url}, player=player)   # new_tab: go_to would just switch to an open Gmail tab
     if not nav.startswith("Opened"):
         return f"Sir, I couldn't open Gmail compose: {nav}"
 

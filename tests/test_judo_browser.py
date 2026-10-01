@@ -40,18 +40,37 @@ def test_default_goes_to_judo_browser(monkeypatch):
     assert sent == [("go_to", {"action": "go_to", "url": "youtube.com"})]
 
 
-def test_unsupported_or_failing_judo_browser_falls_back_to_edge(monkeypatch):
-    for reply in (None, RuntimeError("did not start")):
-        _fake_client(monkeypatch, reply)
-        monkeypatch.setattr(bc._registry, "get", lambda b=None: (_ for _ in ()).throw(RuntimeError("edge reached")))
-        assert "edge reached" in bc.browser_control({"action": "fill_form", "fields": {}})
+def test_unsupported_or_failing_judo_browser_never_opens_edge(monkeypatch):
+    monkeypatch.setattr(bc._registry, "get", lambda b=None: pytest.fail("Edge path must not run"))
+    _fake_client(monkeypatch, None)
+    assert "can't do 'fill_form'" in bc.browser_control({"action": "fill_form", "fields": {}})
+    _fake_client(monkeypatch, RuntimeError("did not start"))
+    out = bc.browser_control({"action": "go_to", "url": "x.com"})
+    assert "could not be started" in out and "No other browser" in out
 
 
-def test_naming_another_browser_skips_judo_browser(monkeypatch):
-    sent = _fake_client(monkeypatch, "judo")
-    monkeypatch.setattr(bc._registry, "get", lambda b=None: (_ for _ in ()).throw(RuntimeError(f"edge path for {b}")))
-    assert "edge path for firefox" in bc.browser_control({"action": "go_to", "url": "x.com", "browser": "firefox"})
-    assert sent == []
+def test_naming_chrome_or_edge_still_uses_judo_browser(monkeypatch):
+    sent = _fake_client(monkeypatch, "Opened X")
+    monkeypatch.setattr(bc._registry, "get", lambda b=None: pytest.fail("Edge path must not run"))
+    for name in ("chrome", "edge", "firefox"):
+        assert bc.browser_control({"action": "go_to", "url": "x.com", "browser": name}) == "Opened X"
+    assert sent == [("go_to", {"action": "go_to", "url": "x.com"})] * 3     # 'browser' is dropped
+
+
+def test_open_app_chrome_brings_up_judo_browser(monkeypatch):
+    import actions.open_app as oa
+    sent = _fake_client(monkeypatch, "JUDO Browser is in front.")
+    monkeypatch.setattr(oa, "_OS_LAUNCHERS", {})       # any real launch would fail the assertion below
+    for name in ("Chrome", "edge", "browser"):
+        assert oa.open_app({"app_name": name}) == "JUDO Browser is in front."
+    assert [a for a, _ in sent] == ["focus"] * 3
+
+
+def test_open_in_browser_uses_judo_browser(monkeypatch):
+    sent = _fake_client(monkeypatch, "Opened")
+    monkeypatch.setattr(bc, "_open_in_running", lambda *a: pytest.fail("Edge path must not run"))
+    assert bc.open_in_browser("youtube.com/watch?v=1") is True
+    assert sent[0][0] == "new_tab" and "youtube.com/watch?v=1" in sent[0][1]["url"]
 
 
 def test_passwords_encrypted_per_windows_user_and_matched_by_origin(tmp_path, monkeypatch):

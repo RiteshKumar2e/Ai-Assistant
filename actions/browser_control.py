@@ -312,8 +312,15 @@ def _preferred_browser() -> str:
 
 
 def open_in_browser(url: str) -> bool:
-    """Open a URL in JUDO's browser (Edge by default) as a tab in its open window —
-    for actions that just need to show a page. Never closes or restarts anything."""
+    """Open a URL in JUDO Browser as a new tab — for actions that just need to
+    show a page. Never opens Edge/Chrome (unless config "default_browser" says so)."""
+    if _judo_browser_default():
+        try:
+            from judo_browser import client as judo_client
+            return judo_client.send("new_tab", {"url": _normalize_url(url)}) is not None
+        except Exception as e:
+            print(f"[Browser] JUDO Browser could not open {url}: {e}")
+            return False
     name = _preferred_browser()
     exe = _resolve_exe_path(name)
     return bool(exe) and _open_in_running(exe, _normalize_url(url))
@@ -1027,6 +1034,15 @@ def browser_control(
     browser = params.get("browser", "").lower().strip() or None
     result  = "Unknown action."
 
+    # ── JUDO Browser only ──
+    # Every action goes to JUDO's own browser (judo_browser/), started on
+    # demand — even when the user names Chrome or Edge, which JUDO never opens.
+    # What JUDO Browser can't do is reported, not retried in another browser.
+    if _judo_browser_default():
+        result = _judo_browser(action, params)
+        _log(player, result)
+        return result
+
     if action == "switch":
         target = browser or params.get("target", "").lower().strip()
         result = _registry.switch(target) if target else "Please specify a browser."
@@ -1048,21 +1064,6 @@ def browser_control(
         result = _registry.close_one(target) if target else "No browser specified."
         _log(player, result)
         return result
-
-    # ── JUDO Browser first ──
-    # With no browser named (or "judo"), actions go to JUDO's own browser
-    # (judo_browser/), started on demand. It answers None for anything it
-    # can't do, and any failure falls through to the Edge path below.
-    if browser in (None, "judo", "judo browser") and _judo_browser_default():
-        try:
-            from judo_browser import client as judo_client
-            r = judo_client.send(action, params)
-            if r is not None:
-                _log(player, r)
-                return r
-        except Exception as e:
-            print(f"[Browser] JUDO Browser unavailable ({e}) — using Edge")
-        browser = None if browser in ("judo", "judo browser") else browser
 
     # ── Every action drives ONE browser: the user's actual, already-open one ──
     # go_to / search / new_tab used to open natively (a separate, uncontrolled
@@ -1150,8 +1151,25 @@ def browser_control(
     return result
 
 
+_JUDO_ALIASES = {"switch": "focus", "list_browsers": "focus"}   # one browser: these just bring it forward
+
+
+def _judo_browser(action: str, params: dict) -> str:
+    """One browser_control action in JUDO Browser, as a sentence for the user."""
+    params = {k: v for k, v in params.items() if k != "browser"}
+    try:
+        from judo_browser import client as judo_client
+        r = judo_client.send(_JUDO_ALIASES.get(action, action), params)
+    except Exception as e:
+        return f"JUDO Browser could not be started ({e}). No other browser was opened."
+    if r is None:
+        return f"JUDO Browser can't do '{action}'. No other browser was opened."
+    return r
+
+
 def _judo_browser_default() -> bool:
-    """config/api_keys.json "default_browser": "judo" (default) or "edge"."""
+    """config/api_keys.json "default_browser": "judo" (default) or "edge" — the
+    only way back to driving Edge/Chrome."""
     try:
         cfg = json.loads((Path(__file__).resolve().parent.parent / "config" / "api_keys.json").read_text(encoding="utf-8"))
         return str(cfg.get("default_browser", "judo")).lower() == "judo"
@@ -1188,7 +1206,8 @@ def _log(player, text: str):
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "browser_control",
-    "description": "Controls the web browser (JUDO Browser by default). Use for: opening ANY website or URL ('YouTube kholo', 'open chatgpt', 'gmail kholo', 'amazon.in pe jao'), showing search results in the browser, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Every action — including plain go_to/search — runs in the user's own already-open browser (real profile, logged-in accounts, extensions); it never opens a second, separate, logged-out browser window, and it NEVER closes, kills or restarts the user's browser. go_to/search/new_tab open as new tabs in the window that is already open. go_to a site that already has an open tab (e.g. chatgpt.com) switches to that tab. switch_tab (target = words from the tab title, e.g. 'ChatGPT') brings an open tab to the front. Typing, clicking, pressing keys and reading the page work on the open window (UI Automation on Windows when the browser has no debug port); if an action can't be done the tool says so — report that honestly, never retry by closing the browser. JUDO's browser is JUDO Browser (its own Chrome-like browser): leave 'browser' empty to use it (ChatGPT, GitHub, Gmail, everything) — it starts by itself if closed, and reading the page, clicking, typing and pressing keys all work in it. Only pass 'browser' when the user explicitly names a different one (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
+    "description": "Controls JUDO Browser — JUDO's own Chrome-like browser and the ONLY browser JUDO uses. Use for: opening ANY website or URL ('YouTube kholo', 'open chatgpt', 'gmail kholo', 'amazon.in pe jao'), showing search results, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. It starts by itself if closed. go_to/search/new_tab open as tabs in its window; go_to a site that already has an open tab (e.g. chatgpt.com) switches to that tab. switch_tab (target = words from the tab title, e.g. 'ChatGPT') brings an open tab to the front. Reading the page, clicking, typing and pressing keys all work in it. Chrome, Edge and other browsers are never opened — even 'Chrome kholo' / 'open in Edge' means JUDO Browser, so leave 'browser' empty. If an action can't be done the tool says so — report that honestly.",
+
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -1198,7 +1217,7 @@ TOOL = {
             },
             "browser": {
                 "type": "STRING",
-                "description": "Target browser: chrome | edge | firefox | opera | operagx | brave | vivaldi | safari. Omit to use the currently active browser."
+                "description": "Leave empty — every action runs in JUDO Browser (Chrome/Edge are never opened)."
             },
             "url": {
                 "type": "STRING",

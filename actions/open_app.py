@@ -11,6 +11,9 @@ except ImportError:
 
 _SYSTEM = platform.system()
 
+_BROWSER_NAMES = {"browser", "web browser", "internet", "judo browser", "chrome", "google chrome",
+                  "edge", "microsoft edge", "msedge", "safari", "firefox", "brave", "opera", "vivaldi"}
+
 _APP_ALIASES: dict[str, dict[str, str]] = {
 
     "chrome":             {"Windows": "chrome",                  "Darwin": "Google Chrome",        "Linux": "google-chrome"},
@@ -255,6 +258,13 @@ def open_app(
         from actions.open_folder import open_folder
         return open_folder({"folder_path": "desktop", "open_in": "claude"}, player)
 
+    # JUDO Browser is the only browser JUDO opens: "Chrome kholo" / "open Edge"
+    # bring up JUDO Browser instead of launching Chrome or Edge.
+    if app_name.lower() in _BROWSER_NAMES:
+        from actions.browser_control import _judo_browser, _judo_browser_default
+        if _judo_browser_default():
+            return _judo_browser("focus", {})
+
     launcher = _OS_LAUNCHERS.get(_SYSTEM)
     if launcher is None:
         return f"Unsupported operating system: {_SYSTEM}"
@@ -283,7 +293,7 @@ def open_app(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
-    "description": "Opens/launches an installed desktop application or program (Spotify, WhatsApp, Notepad, Calculator, VS Code, Word, Excel, Settings, Edge). Use for 'Spotify kholo', 'open calculator', 'notepad chalu karo'. NOT for websites or URLs (youtube.com, chatgpt, gmail, any site) — those are browser_control go_to. NOT for a folder (open_folder). Always call this tool — never just say you opened it.",
+    "description": "Opens/launches an installed desktop application or program (Spotify, WhatsApp, Notepad, Calculator, VS Code, Word, Excel, Settings). Browsers (Chrome, Edge, 'browser kholo') open JUDO Browser instead — JUDO never launches Chrome or Edge. Use for 'Spotify kholo', 'open calculator', 'notepad chalu karo'. NOT for websites or URLs (youtube.com, chatgpt, gmail, any site) — those are browser_control go_to. NOT for a folder (open_folder). Always call this tool — never just say you opened it.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

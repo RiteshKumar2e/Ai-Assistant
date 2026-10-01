@@ -112,8 +112,8 @@ BROWSER = JUDO BROWSER
 Every website, ChatGPT, YouTube, Gmail and search opens in JUDO Browser — JUDO's own Chrome-like
 browser, browser_control's default (leave 'browser' empty). It starts by itself if it is closed, and
 reading the page, clicking, typing and pressing keys all work in it.
-Do NOT pass browser="chrome" or "edge" unless the user explicitly names that browser in this request.
-Never close or restart any browser.
+JUDO Browser is the ONLY browser: never open Chrome or Edge. "Chrome kholo", "open Edge", "open in
+Chrome" all mean JUDO Browser — use browser_control (leave 'browser' empty), not open_app.
 
 YOUTUBE / VIDEO
 If the user wants to watch a video:
