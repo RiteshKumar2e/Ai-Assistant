@@ -284,13 +284,35 @@ header a:hover{text-decoration:underline}
 .a-colors span.sel{outline:2px solid __TEXT__;outline-offset:2px}
 .btn.danger{color:#D93025;margin-right:auto}
 main{display:flex;flex-direction:column;align-items:center;padding-top:max(13vh,72px);min-height:100%}
-.logo{font:500 92px/1 'Poppins','Product Sans','Segoe UI',sans-serif;letter-spacing:-2px;user-select:none;
- margin-bottom:30px;display:flex}
-.logo span{display:inline-block;transition:transform .25s}
-.logo:hover span:nth-child(odd){transform:translateY(-5px)}
-.logo:hover span:nth-child(even){transform:translateY(5px)}
-.l1{color:#4285F4}.l2{color:#EA4335}.l3{color:#FBBC05}.l4{color:#34A853}
-.on-dark .logo span{color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.35)}
+/* the JUDO logo: 3D letters (extruded in a darker shade), dropped in one by one, floating,
+   a light sheen passing over, tilting toward the mouse; click = a 3D spin */
+.logo-stage{perspective:900px;margin-bottom:30px}
+.logo{font:600 96px/1.1 'Poppins','Product Sans','Segoe UI',sans-serif;letter-spacing:-1px;user-select:none;
+ display:flex;gap:1px;cursor:pointer;transform-style:preserve-3d;transition:transform .35s cubic-bezier(.2,.8,.3,1);
+ transform:rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg))}
+.logo span{display:inline-block;position:relative;color:var(--c);transform-style:preserve-3d;
+ text-shadow:0 1px 0 var(--d),0 2px 0 var(--d),0 3px 0 var(--d),0 4px 0 var(--d),0 5px 0 var(--d),
+  0 6px 1px rgba(0,0,0,.12),0 10px 18px rgba(0,0,0,.18);
+ transition:translate .3s cubic-bezier(.2,.9,.3,1.4),scale .3s cubic-bezier(.2,.9,.3,1.4),rotate .9s cubic-bezier(.3,.7,.2,1);
+ animation:judoIn .9s cubic-bezier(.2,.9,.25,1.25) both,judoFloat 5.5s ease-in-out infinite;
+ animation-delay:calc(var(--i) * .09s),calc(1.1s + var(--i) * .35s)}
+.logo span::after{content:attr(data-l);position:absolute;inset:0;color:transparent;text-shadow:none;pointer-events:none;
+ background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.85) 49%,transparent 63%) no-repeat;
+ background-size:260% 100%;background-position:160% 0;-webkit-background-clip:text;background-clip:text;
+ animation:judoSheen 7s ease-in-out infinite;animation-delay:calc(1.6s + var(--i) * .12s)}
+.logo span:hover{translate:0 -10px;scale:1.12}
+.logo.spin span{rotate:y 360deg}
+.l1{--c:#4285F4;--d:#1F5FC9;--i:0}.l2{--c:#EA4335;--d:#B3261E;--i:1}
+.l3{--c:#FBBC05;--d:#C48A00;--i:2}.l4{--c:#34A853;--d:#1E7E3A;--i:3}
+.on-dark .logo span{text-shadow:0 1px 0 var(--d),0 2px 0 var(--d),0 3px 0 var(--d),0 4px 0 var(--d),0 5px 0 var(--d),
+  0 8px 4px rgba(0,0,0,.25),0 14px 30px rgba(0,0,0,.45)}
+.no-intro .logo span{animation:judoFloat 5.5s ease-in-out infinite;animation-delay:calc(var(--i) * .35s)}
+@keyframes judoIn{from{opacity:0;transform:translateY(-70px) rotateX(-100deg) scale(.6)}
+ 70%{opacity:1}to{opacity:1;transform:none}}
+@keyframes judoFloat{0%,100%{transform:translateY(0) rotateX(0)}50%{transform:translateY(-6px) rotateX(10deg)}}
+@keyframes judoSheen{0%{background-position:160% 0}28%,100%{background-position:-70% 0}}
+@media (prefers-reduced-motion:reduce){.logo,.logo span,.logo span::after{animation:none;transition:none}
+ .logo span::after{display:none}}
 .search{position:relative;width:min(584px,90vw)}
 .box{display:flex;align-items:center;height:48px;padding:0 8px 0 16px;border-radius:24px;background:__BOX__;
  border:1px solid __BORDER__;color:__SUB__}
@@ -466,6 +488,24 @@ list.addEventListener('mousedown', e => {
 });
 $('#clear').onclick = () => { q.value = ''; box.classList.remove('typed'); items = []; render(); q.focus(); };
 $('#searchIcon').onclick = () => go(q.value);
+
+// ── the 3D logo leans toward the mouse; a click spins it ──
+const logo = $('.logo');
+if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  document.addEventListener('mousemove', e => {
+    const r = logo.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const ry = Math.max(-1, Math.min(1, (e.clientX - cx) / (innerWidth / 2))) * 14;
+    const rx = Math.max(-1, Math.min(1, (cy - e.clientY) / (innerHeight / 2))) * 12;
+    logo.style.setProperty('--rx', rx.toFixed(2) + 'deg'); logo.style.setProperty('--ry', ry.toFixed(2) + 'deg');
+  });
+  document.addEventListener('mouseleave', () => { logo.style.setProperty('--rx', '0deg'); logo.style.setProperty('--ry', '0deg'); });
+  logo.addEventListener('click', () => {
+    if (logo.classList.contains('spin')) return;
+    logo.classList.add('spin');
+    setTimeout(() => { logo.querySelectorAll('span').forEach(s => s.style.transition = 'none');
+      logo.classList.remove('spin'); requestAnimationFrame(() => logo.querySelectorAll('span').forEach(s => s.style.transition = '')); }, 950);
+  });
+}
 
 // ── favicons: the site's icon, else its main domain's (web.whatsapp.com -> whatsapp.com), else
 // its first letter. Google's service answers "no icon" with a 16px globe, not an error.
@@ -731,7 +771,8 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
           f" ICON_SEARCH={json.dumps(SVG['search'])}, ICON_HIST={json.dumps(SVG['history'])},"
           f" ACCOUNT={json.dumps({k: acct.get(k, '') for k in ('id', 'name', 'email', 'color', 'photo')})},"
           f" NEXT_COLOR={json.dumps(next_color)};" + JS)
-    body_cls = " ".join(c for c in ("has-bg" if bg_css else "", "on-dark" if on_dark else "") if c)
+    body_cls = " ".join(c for c in ("has-bg" if bg_css else "", "on-dark" if on_dark else "",
+                                    "no-intro" if panel or toast else "") if c)
 
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title>
 <link rel="preconnect" href="https://fonts.gstatic.com">
@@ -744,7 +785,7 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
 <div class="popup" id="apps">{apps_html}</div>
 <div class="popup" id="menu"><button id="mEdit">Edit shortcut</button><button id="mRemove">Remove</button></div>
 <main>
-<div class="logo" title="JUDO"><span class="l1">J</span><span class="l2">U</span><span class="l3">D</span><span class="l4">O</span></div>
+<div class="logo-stage"><div class="logo" title="JUDO"><span class="l1" data-l="J">J</span><span class="l2" data-l="U">U</span><span class="l3" data-l="D">D</span><span class="l4" data-l="O">O</span></div></div>
 <div class="search"><div class="box"><span id="searchIcon" style="display:flex;cursor:pointer">{SVG["search"]}</span>
 <input id="q" autocomplete="off" spellcheck="false" placeholder="Search {html.escape(engine_name)} or type a URL" aria-label="Search">
 <button class="icon-btn" id="clear" title="Clear">{SVG["close"]}</button></div><ul id="sugg"></ul></div>

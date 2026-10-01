@@ -166,7 +166,7 @@ def test_new_tab_page_shows_judo_logo_and_theme():
     s = _ntp_settings()
     s.update(ntp_background="sunset")
     page = newtab.page(s, [], theme.resolve("light"), panel=True)
-    assert '<span class="l1">J</span><span class="l2">U</span><span class="l3">D</span><span class="l4">O</span>' in page
+    assert 'data-l="J">J</span>' in page and 'data-l="O">O</span>' in page
     assert "Customize JUDO" in page and 'id="panel" class="show"' in page and "on-dark" in page
     assert "Incognito" in newtab.page(s, [], theme.THEMES["incognito"], incognito=True)
 
