@@ -7,7 +7,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from PyQt6.QtCore import QByteArray, QSize, Qt
-from PyQt6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
+from PyQt6.QtGui import QColor, QConicalGradient, QFont, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
 THEMES = {
@@ -121,6 +121,36 @@ def icon(name: str, color: str, size: int = 20) -> QIcon:
     p.end()
     pm.setDevicePixelRatio(ratio)
     return QIcon(pm)
+
+
+@lru_cache(maxsize=1)
+def judo_icon() -> QIcon:
+    """JUDO Browser's own icon — a ring in the logo's four colours around a blue J —
+    for the taskbar, the window and JUDO's own pages' tabs (instead of Python's)."""
+    out = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        ring = QConicalGradient(size / 2, size / 2, 90)
+        for i, c in enumerate(("#EA4335", "#4285F4", "#34A853", "#FBBC05")):   # hard quarters, clockwise from top
+            ring.setColorAt(i / 4, QColor(c))
+            ring.setColorAt((i + 1) / 4 - 0.0001, QColor(c))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(ring)
+        p.drawEllipse(0, 0, size, size)
+        inset = size * 0.17
+        p.setBrush(QColor("#FFFFFF"))
+        p.drawEllipse(int(inset), int(inset), int(size - 2 * inset), int(size - 2 * inset))
+        f = QFont("Segoe UI", -1, QFont.Weight.Black)
+        f.setPixelSize(max(7, int(size * 0.52)))
+        p.setFont(f)
+        p.setPen(QColor("#4285F4"))
+        p.drawText(pm.rect().adjusted(0, -int(size * 0.02), 0, 0), Qt.AlignmentFlag.AlignCenter, "J")
+        p.end()
+        out.addPixmap(pm)
+    return out
 
 
 def palette(t: dict) -> QPalette:

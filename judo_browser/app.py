@@ -985,7 +985,10 @@ class MainWindow(QMainWindow):
         if not getattr(v, "_loading", False):
             i = self.tabs.indexOf(v)
             if i >= 0:
-                self.tab_strip.setTabIcon(i, icon if not icon.isNull() else theme.icon("globe", self.t["sub"], 16))
+                p = v.page()
+                own = p.ntp or p.account_section or p.about          # JUDO's own pages wear JUDO's icon
+                fallback = theme.judo_icon() if own else theme.icon("globe", self.t["sub"], 16)
+                self.tab_strip.setTabIcon(i, icon if not icon.isNull() else fallback)
 
     def _loading(self, v, on: bool) -> None:
         v._loading = on
@@ -1386,9 +1389,14 @@ def main(argv: list[str] | None = None) -> int:
     flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
     if "--log-level" not in flags:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (flags + " --log-level=3").strip()
+    if sys.platform == "win32":
+        # Its own taskbar identity: without it Windows groups the window under pythonw.exe and shows Python's icon
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Ritesh.JUDO.Browser")
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(argv)
     app.setApplicationName("JUDO Browser")
+    app.setWindowIcon(theme.judo_icon())
     app.setStyle("Fusion")
     browser = Browser(app)
     browser.start(to_url(argv[1]) if len(argv) > 1 else None)
