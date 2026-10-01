@@ -54,7 +54,7 @@ BACKGROUNDS = {
     "rose": ("Rose gold", "linear-gradient(135deg,#F4C4C9 0%,#D9A7B0 45%,#B07D8A 100%)"),
 }
 LIGHT_BACKGROUNDS = {"peach", "lavender", "mint", "desert", "rose"}   # dark text reads better on these
-PAGES = ("settings", "history", "downloads", "bookmarks")
+PAGES = ("settings", "history", "downloads", "bookmarks", "passwords", "clear")
 
 
 def _host(url: str) -> str:
@@ -259,18 +259,20 @@ header a:hover{text-decoration:underline}
 .a-cam{position:absolute;right:-4px;bottom:-2px;width:30px;height:30px;border-radius:50%;border:0;cursor:pointer;
  background:__ACCT_BG__;color:__TEXT__;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35)}
 .a-cam svg{width:16px;height:16px}
-.a-hi{font-size:22px;margin:12px 0 16px}
-.a-manage{border:1px solid __SUB__;background:transparent;color:__ACCENT__;border-radius:100px;padding:9px 24px;
- font:500 14px 'Segoe UI',sans-serif;cursor:pointer}
-.a-manage:hover{background:__HOVER__}
-.a-card{background:__CARD__;border-radius:24px;overflow:hidden}
-.a-card + .a-card{margin-top:4px}
-.a-row{display:flex;align-items:center;gap:16px;width:100%;padding:14px 22px;border:0;background:transparent;
- color:__TEXT__;font:14px 'Segoe UI',sans-serif;text-align:left;cursor:pointer}
-.a-row + .a-row{border-top:2px solid __ACCT_BG__}
-.a-row:hover{background:__HOVER__}
+.a-hi{font-size:22px;margin:12px 0 4px}
+.a-group{display:flex;flex-direction:column;gap:2px}
+.a-row{display:flex;align-items:center;gap:16px;width:100%;padding:15px 22px;border:0;background:__CARD__;
+ color:__TEXT__;font:500 14px 'Segoe UI',sans-serif;text-align:left;cursor:pointer;border-radius:4px}
+.a-group .a-row:first-child{border-radius:24px 24px 4px 4px}
+.a-group .a-row:last-child{border-radius:4px 4px 24px 24px}
+.a-row:hover{background:__ROW_HOVER__}
+.a-manage{margin-top:10px;border-radius:24px}
+.jlogo{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+ background:conic-gradient(#EA4335 0 25%,#FBBC05 0 50%,#34A853 0 75%,#4285F4 0)}
+.jlogo b{width:14px;height:14px;border-radius:50%;background:__CARD__;color:#4285F4;font:700 10px/14px 'Segoe UI';
+ text-align:center}
 .a-row .av{width:32px;height:32px;font-size:14px}
-.a-row small{display:block;color:__SUB__;font-size:12px;margin-top:1px}
+.a-row small{display:block;color:__SUB__;font-size:12px;margin-top:1px;font-weight:400}
 .a-icon{width:32px;display:grid;place-items:center;color:__SUB__}
 .a-foot{text-align:center;font-size:12px;color:__SUB__;padding:12px 0 4px}
 .a-foot a{cursor:pointer;text-decoration:none}.a-foot a:hover{text-decoration:underline}
@@ -509,7 +511,7 @@ function openAccountForm(mode) {
   am.classList.add('show'); $('#aName').focus();
 }
 $$('[data-acolor]').forEach(x => x.onclick = () => { acolor = x.dataset.acolor; paintColors(); });
-$('#aManage').onclick = () => openAccountForm('edit');
+$('#aManage').onclick = () => { hidePopups(); send({cmd: 'account_manage'}); };
 $('#aAdd').onclick = () => openAccountForm('add');
 $('#aCancel').onclick = () => am.classList.remove('show');
 $('#aRemove').onclick = () => { am.classList.remove('show'); send({cmd: 'account_remove'}); };
@@ -603,11 +605,12 @@ def _account_popup(acct: dict, others: list[dict]) -> str:
 <button class="icon-btn" id="acctClose" title="Close">{SVG["close"]}</button></div>
 <div class="a-head"><div class="a-pic">{_avatar(acct, "a-big")}
 <button class="a-cam" id="aPhoto" title="Change profile picture">{SVG["camera"]}</button></div>
-<div class="a-hi">Hi, {first}!</div>
-<button class="a-manage" id="aManage">Manage your JUDO Account</button></div>
-<div class="a-card">{rows}
+<div class="a-hi">Hi, {first}!</div></div>
+<div class="a-group">{rows}
 <button class="a-row" id="aAdd"><span class="a-icon">{SVG["add"]}</span>Add another account</button>
 <button class="a-row" id="aSignout"><span class="a-icon">{SVG["logout"]}</span>Sign out of all websites</button></div>
+<button class="a-row a-manage" id="aManage"><span class="a-icon"><span class="jlogo"><b>J</b></span></span>
+Manage your JUDO Account</button>
 <div class="a-foot">Kept only on this PC · <a data-open="settings">Settings</a></div></div>
 <div id="amodal" class="modal"><form><h4>Manage your JUDO Account</h4>
 <label for="aName">Name</label><input id="aName" maxlength="40" required>
@@ -702,7 +705,7 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
                      "HOVER": t["hover"], "BORDER": t["border"], "BOX": box, "POPUP": t["popup"],
                      "ACCENT": t["accent"], "BUBBLE": t["omni"] if not on_dark else "#FFFFFF",
                      "ON_ACCENT": on_accent, "ACCT_BG": "#28292C" if dark else "#E9EEF6",
-                     "CARD": "#1B1B1C" if dark else "#FFFFFF"})
+                     "CARD": "#1B1B1C" if dark else "#FFFFFF", "ROW_HOVER": "#2C2D30" if dark else "#F1F3F4"})
     js = (f"const CMD={json.dumps(CMD)}, ENGINE={json.dumps(engine)}, HISTORY={json.dumps(hist, ensure_ascii=False)},"
           f" ICON_SEARCH={json.dumps(SVG['search'])}, ICON_HIST={json.dumps(SVG['history'])},"
           f" ACCOUNT={json.dumps({k: acct.get(k, '') for k in ('id', 'name', 'email', 'color', 'photo')})},"

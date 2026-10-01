@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLi
                              QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QTabBar, QToolButton,
                              QVBoxLayout, QWidget, QWidgetAction)
 
-from judo_browser import accounts, dialogs, newtab, passwords, theme
+from judo_browser import account_page, accounts, dialogs, newtab, passwords, theme
 from judo_browser.app_data import DATA, SEARCH_ENGINES, load, load_settings, save
 
 HOME_URL = "judo:newtab"
@@ -74,6 +74,7 @@ class Page(QWebEnginePage):
         super().__init__(profile, win)
         self.win = win
         self.ntp = False                       # showing JUDO's New Tab page (set by MainWindow.load)
+        self.account_section = ""              # showing the JUDO Account page: its section, else ""
         self.fullScreenRequested.connect(self._fullscreen)
         if hasattr(self, "permissionRequested"):          # Qt >= 6.8
             self.permissionRequested.connect(self._permission)
@@ -84,7 +85,7 @@ class Page(QWebEnginePage):
 
     def javaScriptConsoleMessage(self, level, message, line, source):
         # pages' console noise stays out of JUDO's log; only the New Tab page talks to us this way
-        if self.ntp and message.startswith(newtab.CMD):
+        if (self.ntp or self.account_section) and message.startswith(newtab.CMD):
             try:
                 cmd = json.loads(message[len(newtab.CMD):])
             except ValueError:
@@ -404,6 +405,8 @@ class Browser:
                 if v.page().ntp:
                     mine = v.page() is active
                     w.load(QUrl(HOME_URL), v, panel=mine and panel, toast=toast if mine else "")
+                elif v.page().account_section:
+                    w.load(QUrl(f"{account_page.URL}#{v.page().account_section}"), v)
 
     # history / bookmarks
     def record(self, url: str, title: str) -> None:
@@ -761,7 +764,17 @@ class MainWindow(QMainWindow):
     def load(self, url: QUrl, view: QWebEngineView | None = None, panel: bool = False, toast: str = "") -> None:
         view = view or self.view()
         view.page().ntp = url.toString() == HOME_URL
-        if view.page().ntp:
+        view.page().account_section = (url.fragment() or "home") if url.toString(
+            QUrl.UrlFormattingOption.RemoveFragment) == account_page.URL and not self.incognito else ""
+        if view.page().account_section:
+            b = self.browser
+            others = [a for a in b.accounts["list"] if a["id"] != self.account]
+            stats = {"history": len(b.history), "bookmarks": len(b.bookmarks), "passwords": len(self.passwords.items),
+                     "never_save": len(self.passwords.never), "offer_passwords": b.settings["offer_passwords"],
+                     "sandbox": "QTWEBENGINE_DISABLE_SANDBOX" not in os.environ}
+            view.setHtml(account_page.page(b.account(self.account), others, stats, self.t,
+                                           view.page().account_section), QUrl("about:blank"))
+        elif view.page().ntp:
             b = self.browser
             others = [a for a in b.accounts["list"] if a["id"] != self.account]
             view.setHtml(newtab.page(b.settings, b.history, self.t, incognito=self.incognito, panel=panel, toast=toast,
@@ -777,7 +790,7 @@ class MainWindow(QMainWindow):
             return
         b = self.browser
         if str(cmd.get("cmd", "")).startswith("account_"):
-            return self.account_command(cmd)
+            return self.account_command(cmd, page)
         effect = newtab.apply(b.settings, cmd, b.ntp_undo)
         if effect == "pick_bg":
             path, _ = QFileDialog.getOpenFileName(self, "Choose a background image", str(Path.home() / "Pictures"),
@@ -790,7 +803,9 @@ class MainWindow(QMainWindow):
         if effect is None:
             return
         if effect.startswith("open:"):
-            return getattr(self, effect[5:])()
+            pages = {"passwords": lambda: dialogs.Settings(self, tab="Passwords").exec(),
+                     "clear": lambda: dialogs.ClearData(self).exec()}
+            return pages.get(effect[5:], getattr(self, effect[5:], lambda: None))()
         b.save_settings()
         if effect == "restyle":
             b.apply_settings(True, refresh_ntp=False)
@@ -820,10 +835,41 @@ class MainWindow(QMainWindow):
         if v:
             self._set_title(v, v.title())
 
-    def account_command(self, cmd: dict) -> None:
-        """The JUDO Account popup on the New Tab page."""
+    def account_page(self, section: str = "home") -> None:
+        """Manage your JUDO Account: a new tab, like Google's account page."""
+        if self.incognito:
+            return self.browser.new_window().account_page(section)
+        self.load(QUrl(f"{account_page.URL}#{section}"), self.new_tab(blank=True))
+
+    def export_data(self) -> None:
+        """Download your data: profile, bookmarks, history and settings (never passwords) as JSON."""
+        b, acct = self.browser, self.browser.account(self.account)
+        name = re.sub(r"[^\w-]+", "_", acct["name"]) or "account"
+        path = b.download_dir() / f"JUDO-{name}-{time.strftime('%Y%m%d-%H%M%S')}.json"
+        data = {"exported": time.strftime("%Y-%m-%d %H:%M:%S"), "account": acct, "bookmarks": b.bookmarks,
+                "history": b.history, "settings": {k: v for k, v in b.settings.items() if k != "window"}}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            self.flash(f"Saved your data: {path}", 6000)
+        except OSError as e:
+            self.flash(f"Could not save your data: {e}")
+
+    def account_command(self, cmd: dict, page=None) -> None:
+        """The JUDO Account popup (New Tab page) and the JUDO Account page."""
         b, c, data = self.browser, cmd["cmd"], self.browser.accounts
-        if c == "account_edit":
+        if c == "account_section" and page is not None and cmd.get("section") in account_page.SECTIONS:
+            page.account_section = cmd["section"]          # a redraw comes back to the same section
+        elif c == "account_manage":
+            self.account_page()
+        elif c == "account_export":
+            self.export_data()
+        elif c == "account_offer_passwords":
+            b.settings["offer_passwords"] = bool(cmd.get("on"))
+            b.save_settings()
+        elif c == "account_switch" and cmd.get("id") in {a["id"] for a in data["list"]}:
+            b.open_account(cmd["id"])
+        elif c == "account_edit":
             if accounts.edit(data, self.account, cmd):
                 b.save_accounts()
         elif c == "account_add":
@@ -831,8 +877,6 @@ class MainWindow(QMainWindow):
             if acct:
                 b.save_accounts()
                 b.open_account(acct["id"])
-        elif c == "account_switch" and cmd.get("id") in {a["id"] for a in data["list"]}:
-            b.open_account(cmd["id"])
         elif c == "account_photo":
             path, _ = QFileDialog.getOpenFileName(self, "Choose a profile picture", str(Path.home() / "Pictures"),
                                                   "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)")
@@ -877,7 +921,8 @@ class MainWindow(QMainWindow):
         internal = {"judo://settings": self.settings, "chrome://settings": self.settings,
                     "judo://history": self.history, "chrome://history": self.history,
                     "judo://downloads": self.downloads, "chrome://downloads": self.downloads,
-                    "judo://bookmarks": self.bookmarks, "chrome://bookmarks": self.bookmarks}
+                    "judo://bookmarks": self.bookmarks, "chrome://bookmarks": self.bookmarks,
+                    "judo://account": self.account_page}
         if text.lower() in internal:
             return internal[text.lower()]()
         self.load(to_url(text))
@@ -931,6 +976,7 @@ class MainWindow(QMainWindow):
     def _url_changed(self, v, u: QUrl) -> None:
         if u.toString() not in ("", "about:blank"):
             v.page().ntp = False                 # navigated away from the New Tab page
+            v.page().account_section = ""
         if v is self.view():
             self._sync_omnibox(v)
         self.browser.session_changed()
@@ -1166,6 +1212,7 @@ class MainWindow(QMainWindow):
         look = m.addMenu("Appearance")
         look.aboutToShow.connect(lambda: self._fill_appearance_menu(look))
         m.addAction("Customize JUDO", self.customize)
+        m.addAction("JUDO Account", self.account_page)
         m.addAction("Settings", self.settings)
         m.addAction("About JUDO Browser", lambda: QMessageBox.about(
             self, "About JUDO Browser", f"JUDO Browser\nChromium {qWebEngineChromiumVersion()}"))
