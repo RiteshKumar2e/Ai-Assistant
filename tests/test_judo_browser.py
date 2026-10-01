@@ -188,3 +188,33 @@ def test_add_shortcut_tile_counts_toward_the_ten():
     assert newtab.has_add_tile(s) and len(newtab.tiles(s, hist)) == newtab.MAX_TILES - 1
     s["ntp_shortcut_mode"] = "most_visited"
     assert not newtab.has_add_tile(s) and len(newtab.tiles(s, hist)) == newtab.MAX_TILES
+
+
+def test_judo_accounts_add_edit_remove_and_keep_their_own_storage(tmp_path, monkeypatch):
+    import judo_browser.accounts as acc
+    monkeypatch.setattr(acc, "DATA", tmp_path)
+    data = acc.load_all()
+    assert [a["id"] for a in data["list"]] == ["default"] and data["current"] == "default"
+    assert acc.add(data, {"name": "  ", "email": ""}) is None                        # a name is required
+    assert acc.add(data, {"name": "Work", "email": "not-an-email"}) is None
+    work = acc.add(data, {"name": "Work", "email": "w@example.com", "color": "#188038"})
+    assert work and work["color"] == "#188038" and len(data["list"]) == 2
+    assert acc.edit(data, work["id"], {"name": "Office", "email": "", "color": "bad"})
+    assert acc.get(data, work["id"])["name"] == "Office" and acc.get(data, work["id"])["color"] == acc.COLORS[0]
+    assert acc.storage("default") == (tmp_path / "profile", tmp_path / "cache", "")      # original profile kept
+    assert acc.storage(work["id"])[0] == tmp_path / "accounts" / work["id"] / "profile"
+    assert not acc.remove(data, "default")
+    data["current"] = work["id"]
+    assert acc.remove(data, work["id"]) and data["current"] == "default"
+
+
+def test_account_popup_on_new_tab_page():
+    pytest.importorskip("PyQt6.QtWebEngineCore")
+    from judo_browser import newtab, theme
+    me = {"id": "default", "name": "Ritesh Kumar", "email": "r@example.com", "color": "#1A73E8", "photo": ""}
+    other = {"id": "a1", "name": "Work", "email": "", "color": "#188038", "photo": ""}
+    page = newtab.page(_ntp_settings(), [], theme.resolve("light"), account=me, others=[other])
+    assert 'id="avatarBtn"' in page and "Hi, Ritesh!" in page and "Manage your JUDO Account" in page
+    assert 'data-switch="a1"' in page and "Add another account" in page and "Sign out of all websites" in page
+    assert "<script>" not in newtab.page(_ntp_settings(), [], theme.resolve("light"),
+                                         account=dict(me, name="<script>x"), others=[]).split("<script>const")[0]

@@ -1300,6 +1300,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not (load_settings()["sandbox"] and sandbox_ready()):
         os.environ["QTWEBENGINE_DISABLE_SANDBOX"] = "1"    # Settings → Advanced, or Qt not readable to it
+    # Chromium's internal ERROR lines ("Message 1 rejected by interface blink.mojom.WidgetHost"…) are
+    # engine chatter, not JUDO problems — keep the terminal to fatal ones.
+    flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if "--log-level" not in flags:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (flags + " --log-level=3").strip()
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(argv)
     app.setApplicationName("JUDO Browser")

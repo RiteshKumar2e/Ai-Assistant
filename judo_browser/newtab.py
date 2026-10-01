@@ -221,6 +221,11 @@ SVG = {
                ' 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72'
                '-1.21-3.5-2.08V8H12z"/></svg>',
     "upload": '<svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>',
+    "camera": '<svg viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4zM9 2L7.17 4H4c-1.1 0-2 '
+              '.9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5'
+              ' 5 2.24 5 5-2.24 5-5 5z"/></svg>',
+    "logout": '<svg viewBox="0 0 24 24"><path d="M5 5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h7v-2H5V5zm16 7l-4-4v3H9v2h8v3'
+              'l4-4z"/></svg>',
     "check": '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
 }
 
@@ -238,8 +243,41 @@ header a:hover{text-decoration:underline}
 .icon-btn{width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:inherit;display:grid;
  place-items:center;cursor:pointer}
 .icon-btn:hover{background:__HOVER__}
-.avatar{width:32px;height:32px;border-radius:50%;margin-left:6px;display:grid;place-items:center;color:#fff;
- font-weight:600;background:linear-gradient(135deg,#4285F4,#34A853);cursor:default}
+.av{border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:500;overflow:hidden;flex:none;
+ font-family:'Segoe UI',sans-serif}
+.av img{width:100%;height:100%;object-fit:cover}
+#avatarBtn{width:32px;height:32px;border:0;padding:0;margin-left:6px;font-size:15px;cursor:pointer}
+#avatarBtn:hover{box-shadow:0 0 0 4px __HOVER__}
+#acct{top:56px;right:12px;width:412px;max-width:calc(100vw - 24px);border-radius:28px;padding:14px 14px 10px;
+ background:__ACCT_BG__;max-height:calc(100vh - 70px);overflow-y:auto}
+.a-top{position:relative;text-align:center;font-size:14px;font-weight:500;padding:8px 40px;min-height:36px;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.a-top .icon-btn{position:absolute;right:0;top:0}
+.a-head{display:flex;flex-direction:column;align-items:center;margin:10px 0 16px}
+.a-pic{position:relative}
+.a-big{width:84px;height:84px;font-size:38px}
+.a-cam{position:absolute;right:-4px;bottom:-2px;width:30px;height:30px;border-radius:50%;border:0;cursor:pointer;
+ background:__ACCT_BG__;color:__TEXT__;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+.a-cam svg{width:16px;height:16px}
+.a-hi{font-size:22px;margin:12px 0 16px}
+.a-manage{border:1px solid __SUB__;background:transparent;color:__ACCENT__;border-radius:100px;padding:9px 24px;
+ font:500 14px 'Segoe UI',sans-serif;cursor:pointer}
+.a-manage:hover{background:__HOVER__}
+.a-card{background:__CARD__;border-radius:24px;overflow:hidden}
+.a-card + .a-card{margin-top:4px}
+.a-row{display:flex;align-items:center;gap:16px;width:100%;padding:14px 22px;border:0;background:transparent;
+ color:__TEXT__;font:14px 'Segoe UI',sans-serif;text-align:left;cursor:pointer}
+.a-row + .a-row{border-top:2px solid __ACCT_BG__}
+.a-row:hover{background:__HOVER__}
+.a-row .av{width:32px;height:32px;font-size:14px}
+.a-row small{display:block;color:__SUB__;font-size:12px;margin-top:1px}
+.a-icon{width:32px;display:grid;place-items:center;color:__SUB__}
+.a-foot{text-align:center;font-size:12px;color:__SUB__;padding:12px 0 4px}
+.a-foot a{cursor:pointer;text-decoration:none}.a-foot a:hover{text-decoration:underline}
+.a-colors{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.a-colors span{width:28px;height:28px;border-radius:50%;cursor:pointer}
+.a-colors span.sel{outline:2px solid __TEXT__;outline-offset:2px}
+.btn.danger{color:#D93025;margin-right:auto}
 main{display:flex;flex-direction:column;align-items:center;padding-top:max(13vh,72px);min-height:100%}
 .logo{font:500 92px/1 'Poppins','Product Sans','Segoe UI',sans-serif;letter-spacing:-2px;user-select:none;
  margin-bottom:30px;display:flex}
@@ -336,16 +374,16 @@ footer a:hover{text-decoration:underline}
 .btn{border:1px solid __BORDER__;background:transparent;color:__ACCENT__;border-radius:18px;padding:8px 18px;
  font:500 14px 'Segoe UI',sans-serif;cursor:pointer}
 .btn.primary{background:__ACCENT__;color:__ON_ACCENT__;border:0}
-#modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:40;place-items:center}
-#modal.show{display:grid}
-#modal form{background:__POPUP__;color:__TEXT__;border-radius:12px;padding:22px 24px;width:min(480px,92vw);
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:40;place-items:center}
+.modal.show{display:grid}
+.modal form{background:__POPUP__;color:__TEXT__;border-radius:12px;padding:22px 24px;width:min(480px,92vw);
  box-shadow:0 8px 28px rgba(0,0,0,.3)}
-#modal h4{margin:0 0 16px;font:500 18px 'Segoe UI',sans-serif}
-#modal label{display:block;font-size:12px;color:__SUB__;margin:12px 0 4px}
-#modal input{width:100%;padding:10px 12px;border-radius:6px;border:1px solid __BORDER__;background:__BOX__;
+.modal h4{margin:0 0 16px;font:500 18px 'Segoe UI',sans-serif}
+.modal label{display:block;font-size:12px;color:__SUB__;margin:12px 0 4px}
+.modal input{width:100%;padding:10px 12px;border-radius:6px;border:1px solid __BORDER__;background:__BOX__;
  color:__TEXT__;font-size:14px;outline:none}
-#modal input:focus{border-color:__ACCENT__}
-#modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:22px}
+.modal input:focus{border-color:__ACCENT__}
+.modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:22px}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:none;align-items:center;gap:18px;
  background:#323232;color:#fff;padding:10px 12px 10px 18px;border-radius:6px;z-index:35;font-size:14px}
 #toast.show{display:flex}
@@ -443,9 +481,48 @@ $$('.bubble img, #apps img').forEach(img => {
 // ── popups ──
 const menu = $('#menu'), apps = $('#apps');
 let menuTile = null;
-function hidePopups() { menu.classList.remove('show'); apps.classList.remove('show'); }
-document.addEventListener('click', e => { if (!e.target.closest('.popup, .more, #appsBtn')) hidePopups(); });
-$('#appsBtn').onclick = () => { menu.classList.remove('show'); apps.classList.toggle('show'); };
+const acct = $('#acct');
+function hidePopups() { [menu, apps, acct].forEach(x => x.classList.remove('show')); }
+document.addEventListener('click', e => { if (!e.target.closest('.popup, .more, #appsBtn, #avatarBtn')) hidePopups(); });
+$('#appsBtn').onclick = () => { menu.classList.remove('show'); acct.classList.remove('show'); apps.classList.toggle('show'); };
+$('#avatarBtn').onclick = () => { menu.classList.remove('show'); apps.classList.remove('show'); acct.classList.toggle('show'); };
+
+// ── JUDO Account popup ──
+$('#acctClose').onclick = () => acct.classList.remove('show');
+$('#aPhoto').onclick = () => send({cmd: 'account_photo'});
+$$('[data-switch]').forEach(b => b.onclick = () => { hidePopups(); send({cmd: 'account_switch', id: b.dataset.switch}); });
+$('#aSignout').onclick = () => { hidePopups(); send({cmd: 'account_signout'}); };
+const am = $('#amodal');
+let amode = 'edit', acolor = ACCOUNT.color;
+function paintColors() { $$('[data-acolor]').forEach(x => x.classList.toggle('sel', x.dataset.acolor === acolor)); }
+function openAccountForm(mode) {
+  amode = mode; hidePopups();
+  const edit = mode === 'edit';
+  $('#amodal h4').textContent = edit ? 'Manage your JUDO Account' : 'Add another account';
+  $('#aName').value = edit ? ACCOUNT.name : '';
+  $('#aEmail').value = edit ? ACCOUNT.email : '';
+  acolor = edit ? ACCOUNT.color : NEXT_COLOR; paintColors();
+  $('#aRemove').style.display = edit && ACCOUNT.id !== 'default' ? '' : 'none';
+  $('#aPhotoRow').style.display = edit ? '' : 'none';
+  $('#aPhotoDel').style.display = edit && ACCOUNT.photo ? '' : 'none';
+  $('#aSave').textContent = edit ? 'Save' : 'Add account';
+  am.classList.add('show'); $('#aName').focus();
+}
+$$('[data-acolor]').forEach(x => x.onclick = () => { acolor = x.dataset.acolor; paintColors(); });
+$('#aManage').onclick = () => openAccountForm('edit');
+$('#aAdd').onclick = () => openAccountForm('add');
+$('#aCancel').onclick = () => am.classList.remove('show');
+$('#aRemove').onclick = () => { am.classList.remove('show'); send({cmd: 'account_remove'}); };
+$('#aPhotoChange').onclick = () => send({cmd: 'account_photo'});
+$('#aPhotoDel').onclick = () => { am.classList.remove('show'); send({cmd: 'account_photo_remove'}); };
+am.addEventListener('mousedown', e => { if (e.target === am) am.classList.remove('show'); });
+$('#amodal form').onsubmit = e => {
+  e.preventDefault();
+  if (!$('#aName').value.trim()) return $('#aName').focus();
+  send({cmd: amode === 'edit' ? 'account_edit' : 'account_add', name: $('#aName').value,
+        email: $('#aEmail').value, color: acolor});
+  am.classList.remove('show');
+};
 function showMenu(tile, x, y) {
   menuTile = tile;
   menu.style.left = Math.min(x, innerWidth - 190) + 'px'; menu.style.top = Math.min(y, innerHeight - 100) + 'px';
@@ -501,9 +578,46 @@ $$('[data-open]').forEach(a => a.onclick = () => send({cmd: 'open', page: a.data
 const undo = $('#undo'); if (undo) undo.onclick = () => send({cmd: 'undo'});
 const toast = $('#toast'); if (toast.classList.contains('show')) setTimeout(() => toast.classList.remove('show'), 8000);
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { hidePopups(); panel.classList.remove('show'); modal.classList.remove('show'); }
+  if (e.key === 'Escape') { hidePopups(); panel.classList.remove('show'); modal.classList.remove('show');
+                            am.classList.remove('show'); }
 });
 """
+
+
+def _avatar(acct: dict, cls: str, attrs: str = "") -> str:
+    """A JUDO Account's picture, or its initial on its colour."""
+    inner = (f'<img src="{html.escape(acct["photo"])}" alt="">' if acct.get("photo")
+             else html.escape((acct.get("name") or "J")[:1].upper()))
+    return f'<span class="av {cls}" style="background:{html.escape(acct.get("color") or "#1A73E8")}" {attrs}>{inner}</span>'
+
+
+def _account_popup(acct: dict, others: list[dict]) -> str:
+    first = html.escape((acct["name"] or "there").split()[0])
+    rows = "".join(f'<button class="a-row" data-switch="{html.escape(o["id"])}" title="Switch to {html.escape(o["name"])}">'
+                   f'{_avatar(o, "")}<span>{html.escape(o["name"])}<small>{html.escape(o["email"] or "JUDO Account")}'
+                   f'</small></span></button>' for o in others)
+    from judo_browser.accounts import COLORS
+    colors = "".join(f'<span data-acolor="{c}" style="background:{c}"></span>' for c in COLORS)
+    return f"""<div class="popup" id="acct" role="dialog" aria-label="JUDO Account">
+<div class="a-top">{html.escape(acct["email"] or "JUDO Account")}
+<button class="icon-btn" id="acctClose" title="Close">{SVG["close"]}</button></div>
+<div class="a-head"><div class="a-pic">{_avatar(acct, "a-big")}
+<button class="a-cam" id="aPhoto" title="Change profile picture">{SVG["camera"]}</button></div>
+<div class="a-hi">Hi, {first}!</div>
+<button class="a-manage" id="aManage">Manage your JUDO Account</button></div>
+<div class="a-card">{rows}
+<button class="a-row" id="aAdd"><span class="a-icon">{SVG["add"]}</span>Add another account</button>
+<button class="a-row" id="aSignout"><span class="a-icon">{SVG["logout"]}</span>Sign out of all websites</button></div>
+<div class="a-foot">Kept only on this PC · <a data-open="settings">Settings</a></div></div>
+<div id="amodal" class="modal"><form><h4>Manage your JUDO Account</h4>
+<label for="aName">Name</label><input id="aName" maxlength="40" required>
+<label for="aEmail">Email (optional)</label><input id="aEmail" type="email" maxlength="80" placeholder="you@example.com">
+<label>Colour</label><div class="a-colors">{colors}</div>
+<div id="aPhotoRow"><label>Profile picture</label><button type="button" class="btn" id="aPhotoChange">Change picture</button>
+<button type="button" class="btn" id="aPhotoDel">Remove picture</button></div>
+<div class="actions"><button type="button" class="btn danger" id="aRemove">Remove account</button>
+<button type="button" class="btn" id="aCancel">Cancel</button>
+<button type="submit" class="btn primary" id="aSave">Save</button></div></form></div>"""
 
 
 def _sub(template: str, values: dict) -> str:
@@ -580,12 +694,19 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
                   if toast == "removed" else '<div id="toast"></div>')
 
     on_accent = "#202124" if dark else "#FFFFFF"
+    acct = account or {"id": "default", "name": "You", "email": "", "color": "#1A73E8", "photo": ""}
+    others = others or []
+    from judo_browser.accounts import COLORS as ACOLORS
+    next_color = ACOLORS[(len(others) + 1) % len(ACOLORS)]
     css = _sub(CSS, {"BG_PLAIN": t["toolbar"], "BG": bg_css or t["toolbar"], "TEXT": t["text"], "SUB": t["sub"],
                      "HOVER": t["hover"], "BORDER": t["border"], "BOX": box, "POPUP": t["popup"],
                      "ACCENT": t["accent"], "BUBBLE": t["omni"] if not on_dark else "#FFFFFF",
-                     "ON_ACCENT": on_accent})
+                     "ON_ACCENT": on_accent, "ACCT_BG": "#28292C" if dark else "#E9EEF6",
+                     "CARD": "#1B1B1C" if dark else "#FFFFFF"})
     js = (f"const CMD={json.dumps(CMD)}, ENGINE={json.dumps(engine)}, HISTORY={json.dumps(hist, ensure_ascii=False)},"
-          f" ICON_SEARCH={json.dumps(SVG['search'])}, ICON_HIST={json.dumps(SVG['history'])};" + JS)
+          f" ICON_SEARCH={json.dumps(SVG['search'])}, ICON_HIST={json.dumps(SVG['history'])},"
+          f" ACCOUNT={json.dumps({k: acct.get(k, '') for k in ('id', 'name', 'email', 'color', 'photo')})},"
+          f" NEXT_COLOR={json.dumps(next_color)};" + JS)
     body_cls = " ".join(c for c in ("has-bg" if bg_css else "", "on-dark" if on_dark else "") if c)
 
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title>
@@ -593,7 +714,9 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500&display=swap" rel="stylesheet">
 <style>{css}</style></head><body class="{body_cls}">
 <header><a href="https://mail.google.com">Gmail</a><a href="https://www.google.com/imghp">Images</a>
-<button class="icon-btn" id="appsBtn" title="Apps">{SVG["apps"]}</button><div class="avatar" title="JUDO">J</div></header>
+<button class="icon-btn" id="appsBtn" title="Apps">{SVG["apps"]}</button>
+{_avatar(acct, "", f'id="avatarBtn" role="button" tabindex="0" title="JUDO Account: {html.escape(acct["name"])}"')}</header>
+{_account_popup(acct, others)}
 <div class="popup" id="apps">{apps_html}</div>
 <div class="popup" id="menu"><button id="mEdit">Edit shortcut</button><button id="mRemove">Remove</button></div>
 <main>
@@ -619,7 +742,7 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
 <div class="row" style="margin-top:18px"><button class="btn" id="reset">Reset to default</button>
 <span style="color:{t["sub"]};font-size:12px">{html.escape(chromium)}</span></div>
 </aside>
-<div id="modal"><form><h4>Add shortcut</h4><label for="fName">Name</label><input id="fName" maxlength="60">
+<div id="modal" class="modal"><form><h4>Add shortcut</h4><label for="fName">Name</label><input id="fName" maxlength="60">
 <label for="fUrl">URL</label><input id="fUrl" placeholder="example.com">
 <div class="actions"><button type="button" class="btn" id="fCancel">Cancel</button>
 <button type="submit" class="btn primary" id="fDone">Done</button></div></form></div>
