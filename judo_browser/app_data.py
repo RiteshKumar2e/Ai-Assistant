@@ -42,7 +42,7 @@ def load(name: str, default):
 
 
 def save(name: str, value) -> None:
-    DATA.mkdir(parents=True, exist_ok=True)
+    (DATA / name).parent.mkdir(parents=True, exist_ok=True)   # names may sit in a subfolder (accounts/<id>/…)
     tmp = DATA / (name + ".tmp")
     tmp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
     tmp.replace(DATA / name)

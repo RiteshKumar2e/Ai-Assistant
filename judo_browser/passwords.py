@@ -89,13 +89,15 @@ def origin_of(url: QUrl) -> str:
 
 
 class PasswordStore:
-    def __init__(self):
-        self.items: list[dict] = load(STORE, [])
-        self.never: list[str] = load("passwords_never.json", [])
+    def __init__(self, prefix: str = ""):
+        """`prefix`: a JUDO Account's own folder ("accounts/<id>/"); "" = the default account."""
+        self.prefix = prefix
+        self.items: list[dict] = load(prefix + STORE, [])
+        self.never: list[str] = load(prefix + "passwords_never.json", [])
 
     def _save(self) -> None:
-        save(STORE, self.items)
-        save("passwords_never.json", self.never)
+        save(self.prefix + STORE, self.items)
+        save(self.prefix + "passwords_never.json", self.never)
 
     def for_origin(self, origin: str) -> list[dict]:
         out = []

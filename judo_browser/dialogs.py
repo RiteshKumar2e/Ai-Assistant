@@ -153,11 +153,11 @@ class ClearData(QDialog):
             cutoff = 0 if span is None else time.time() - span
             b.history[:] = [h for h in b.history if h["t"] < cutoff] if span else []
             save("history.json", b.history)
-            b.profile.clearAllVisitedLinks()
+            self.win.profile.clearAllVisitedLinks()
         if self.cookies.isChecked():
-            b.profile.cookieStore().deleteAllCookies()
+            self.win.profile.cookieStore().deleteAllCookies()
         if self.cache.isChecked():
-            b.profile.clearHttpCache()
+            self.win.profile.clearHttpCache()
         self.accept()
         self.win.flash("Browsing data cleared")
 
@@ -274,7 +274,7 @@ class Settings(QDialog):
         lay.addLayout(_row(QLabel(""), done, stretch_first=True))
 
     def _fill_pw(self) -> None:
-        items = self.b.passwords.items
+        items = self.win.passwords.items
         self.pw_table.setRowCount(len(items))
         for r, it in enumerate(items):
             for c, text in enumerate((it["origin"], it["username"], "••••••••")):
@@ -284,8 +284,8 @@ class Settings(QDialog):
         r = self.pw_table.currentRow()
         if r < 0:
             return
-        it = self.b.passwords.items[r]
-        creds = [c for c in self.b.passwords.for_origin(it["origin"]) if c["username"] == it["username"]]
+        it = self.win.passwords.items[r]
+        creds = [c for c in self.win.passwords.for_origin(it["origin"]) if c["username"] == it["username"]]
         if creds and QMessageBox.question(self, "Show password", f"Show the password for {it['origin']}?") \
                 == QMessageBox.StandardButton.Yes:
             self.pw_table.item(r, 2).setText(creds[0]["password"])
@@ -293,8 +293,8 @@ class Settings(QDialog):
     def _delete_pw(self) -> None:
         r = self.pw_table.currentRow()
         if r >= 0:
-            it = self.b.passwords.items[r]
-            self.b.passwords.delete(it["origin"], it["username"])
+            it = self.win.passwords.items[r]
+            self.win.passwords.delete(it["origin"], it["username"])
             self._fill_pw()
 
     def _apply(self) -> None:
@@ -323,8 +323,7 @@ def site_info(win, anchor) -> None:
     lay = QVBoxLayout(dlg)
     lay.addWidget(QLabel(f"<b>{url.host() or url.toString()}</b>"))
     lay.addWidget(QLabel("🔒 Connection is secure" if secure else "⚠️ Your connection to this site is not secure"))
-    perms = win.browser.profile.listPermissionsForOrigin(url) if hasattr(win.browser.profile,
-                                                                           "listPermissionsForOrigin") else []
+    perms = win.profile.listPermissionsForOrigin(url) if hasattr(win.profile, "listPermissionsForOrigin") else []
     for perm in perms:
         state = perm.state().name.replace("Granted", "Allowed").replace("Denied", "Blocked")
         reset = QPushButton("Reset")

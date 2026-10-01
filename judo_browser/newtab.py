@@ -527,7 +527,8 @@ and your internet service provider.</p></div></body></html>"""
 
 
 def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = False,
-         panel: bool = False, toast: str = "", chromium: str = "") -> str:
+         panel: bool = False, toast: str = "", chromium: str = "",
+         account: dict | None = None, others: list[dict] | None = None) -> str:
     """The New Tab page for the current settings and theme."""
     if incognito:
         return _incognito_page(t)

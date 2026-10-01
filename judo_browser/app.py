@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLi
                              QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QTabBar, QToolButton,
                              QVBoxLayout, QWidget, QWidgetAction)
 
-from judo_browser import dialogs, newtab, passwords, theme
+from judo_browser import accounts, dialogs, newtab, passwords, theme
 from judo_browser.app_data import DATA, SEARCH_ENGINES, load, load_settings, save
 
 HOME_URL = "judo:newtab"
@@ -264,18 +264,14 @@ class Browser:
         self.app = app
         DATA.mkdir(parents=True, exist_ok=True)
         self.settings = load_settings()
-        self.profile = QWebEngineProfile("judo", app)
-        self.profile.setPersistentStoragePath(str(DATA / "profile"))
-        self.profile.setCachePath(str(DATA / "cache"))
-        self.profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
-        if hasattr(self.profile, "setPersistentPermissionsPolicy"):   # remember "Allow camera" per site
-            self.profile.setPersistentPermissionsPolicy(QWebEngineProfile.PersistentPermissionsPolicy.StoreOnDisk)
+        self.accounts = accounts.load_all()
+        self._profiles: dict[str, QWebEngineProfile] = {}
+        self._passwords: dict[str, passwords.PasswordStore] = {}
+        self.profile = self.profile_for("default")
+        self.passwords = self.passwords_for("default")
         self.incognito = QWebEngineProfile(app)   # no storage name = off the record: nothing hits the disk
-        for p in (self.profile, self.incognito):
-            p.setHttpUserAgent(chrome_user_agent())
-            p.downloadRequested.connect(self._download)
-        self.passwords = passwords.PasswordStore()
-        passwords.install_script(self.profile)
+        self.incognito.setHttpUserAgent(chrome_user_agent())
+        self.incognito.downloadRequested.connect(self._download)
         self.bookmarks: list[dict] = load("bookmarks.json", [])
         self.history: list[dict] = load("history.json", [])
         self.downloads: list[QWebEngineDownloadRequest] = []
@@ -294,9 +290,52 @@ class Browser:
         from judo_browser.control import ControlServer   # lets JUDO drive this browser by voice
         self.control = ControlServer(self)
 
+    # JUDO Accounts: one Chromium profile (cookies, logins, cache) and password store each
+    def profile_for(self, account_id: str) -> QWebEngineProfile:
+        if account_id not in self._profiles:
+            path, cache, _ = accounts.storage(account_id)
+            p = QWebEngineProfile("judo" if account_id == "default" else f"judo-{account_id}", self.app)
+            p.setPersistentStoragePath(str(path))
+            p.setCachePath(str(cache))
+            p.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+            if hasattr(p, "setPersistentPermissionsPolicy"):   # remember "Allow camera" per site
+                p.setPersistentPermissionsPolicy(QWebEngineProfile.PersistentPermissionsPolicy.StoreOnDisk)
+            p.setHttpUserAgent(chrome_user_agent())
+            p.downloadRequested.connect(self._download)
+            passwords.install_script(p)
+            self._profiles[account_id] = p
+        return self._profiles[account_id]
+
+    def passwords_for(self, account_id: str) -> passwords.PasswordStore:
+        if account_id not in self._passwords:
+            self._passwords[account_id] = passwords.PasswordStore(accounts.storage(account_id)[2])
+        return self._passwords[account_id]
+
+    def account(self, account_id: str) -> dict:
+        return accounts.get(self.accounts, account_id)
+
+    def save_accounts(self) -> None:
+        accounts.save_all(self.accounts)
+        for w in self.windows:
+            w.update_account()
+        self.refresh_ntps()
+
+    def open_account(self, account_id: str) -> None:
+        """Switch to an account the Chrome way: its own window (reused if one is open)."""
+        self.accounts["current"] = account_id
+        accounts.save_all(self.accounts)
+        w = next((x for x in self.windows if x.account == account_id and not x.incognito), None)
+        if w:
+            w.showMaximized() if w.isMinimized() else w.show()
+            w.raise_()
+            w.activateWindow()
+        else:
+            self.new_window(account=account_id)
+
     # windows / session
-    def new_window(self, url: QUrl | None = None, incognito: bool = False, tabs: list | None = None) -> "MainWindow":
-        w = MainWindow(self, incognito)
+    def new_window(self, url: QUrl | None = None, incognito: bool = False, tabs: list | None = None,
+                   account: str | None = None) -> "MainWindow":
+        w = MainWindow(self, incognito, account)
         self.windows.append(w)
         if tabs:
             for t in tabs:
@@ -315,8 +354,10 @@ class Browser:
     def start(self, url: QUrl | None) -> None:
         session = load("session.json", [])
         if self.settings["startup"] == "continue" and session:
+            known = {a["id"] for a in self.accounts["list"]}
             for win_tabs in session:
-                self.new_window(tabs=win_tabs)
+                acct = win_tabs[0].get("account", "default")
+                self.new_window(tabs=win_tabs, account=acct if acct in known else "default")
             if url:
                 self.windows[-1].new_tab(url)
             return
@@ -334,7 +375,7 @@ class Browser:
             tabs = [{"url": v.url().toString(), "pinned": w.is_pinned(i)}
                     for i in range(w.tabs.count()) if (v := w.tabs.widget(i)) and v.url().scheme() in ("http", "https", "file")]
             if tabs:
-                tabs[0]["current"] = w.tabs.currentIndex()
+                tabs[0]["current"], tabs[0]["account"] = w.tabs.currentIndex(), w.account
                 out.append(tabs)
         save("session.json", out)
 
@@ -421,10 +462,13 @@ class Browser:
 # ── a browser window ────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
-    def __init__(self, browser: Browser, incognito: bool = False):
+    def __init__(self, browser: Browser, incognito: bool = False, account: str | None = None):
         super().__init__()
         self.browser, self.incognito = browser, incognito
-        self.profile = browser.incognito if incognito else browser.profile
+        self.account = account or browser.accounts["current"]
+        self.profile = browser.incognito if incognito else browser.profile_for(self.account)
+        self.passwords = browser.passwords_for(self.account)
+        self._title_suffix = ""
         self.t = theme.THEMES["incognito"] if incognito else browser.theme
         self.tabs = Tabs(self)
         self._pinned: set[int] = set()          # ids of pinned views
@@ -538,6 +582,7 @@ class MainWindow(QMainWindow):
         self.toast.hide()
 
         self._shortcuts()
+        self.update_account()
         self.apply_settings(True)
         self.refresh_bookmarks()
 
@@ -618,7 +663,7 @@ class MainWindow(QMainWindow):
                      QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows):
             s.setAttribute(attr, True)
         if not self.incognito:
-            bridge = passwords.attach(page, self.browser.passwords)
+            bridge = passwords.attach(page, self.passwords)
             bridge.offer.connect(self._offer_password)
         self.stack.addWidget(v)
         if index is None:
@@ -717,8 +762,11 @@ class MainWindow(QMainWindow):
         view = view or self.view()
         view.page().ntp = url.toString() == HOME_URL
         if view.page().ntp:
-            view.setHtml(newtab.page(self.browser.settings, self.browser.history, self.t, incognito=self.incognito,
-                                     panel=panel, toast=toast, chromium=f"Chromium {qWebEngineChromiumVersion()}"),
+            b = self.browser
+            others = [a for a in b.accounts["list"] if a["id"] != self.account]
+            view.setHtml(newtab.page(b.settings, b.history, self.t, incognito=self.incognito, panel=panel, toast=toast,
+                                     chromium=f"Chromium {qWebEngineChromiumVersion()}",
+                                     account=b.account(self.account), others=others),
                          QUrl("about:blank"))
         else:
             view.load(url)
@@ -728,6 +776,8 @@ class MainWindow(QMainWindow):
         if self.incognito:
             return
         b = self.browser
+        if str(cmd.get("cmd", "")).startswith("account_"):
+            return self.account_command(cmd)
         effect = newtab.apply(b.settings, cmd, b.ntp_undo)
         if effect == "pick_bg":
             path, _ = QFileDialog.getOpenFileName(self, "Choose a background image", str(Path.home() / "Pictures"),
@@ -760,6 +810,61 @@ class MainWindow(QMainWindow):
             a.setChecked(self.browser.settings["theme"] == key)
         menu.addSeparator()
         menu.addAction("Colours and background…", self.customize)
+
+    def update_account(self) -> None:
+        """Window title names the account when there is more than one, like Chrome's profile name."""
+        b = self.browser
+        many = len(b.accounts["list"]) > 1 and not self.incognito
+        self._title_suffix = f" — {b.account(self.account)['name']}" if many else ""
+        v = self.view()
+        if v:
+            self._set_title(v, v.title())
+
+    def account_command(self, cmd: dict) -> None:
+        """The JUDO Account popup on the New Tab page."""
+        b, c, data = self.browser, cmd["cmd"], self.browser.accounts
+        if c == "account_edit":
+            if accounts.edit(data, self.account, cmd):
+                b.save_accounts()
+        elif c == "account_add":
+            acct = accounts.add(data, cmd)
+            if acct:
+                b.save_accounts()
+                b.open_account(acct["id"])
+        elif c == "account_switch" and cmd.get("id") in {a["id"] for a in data["list"]}:
+            b.open_account(cmd["id"])
+        elif c == "account_photo":
+            path, _ = QFileDialog.getOpenFileName(self, "Choose a profile picture", str(Path.home() / "Pictures"),
+                                                  "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)")
+            photo = accounts.photo_from_file(path) if path else None
+            if path and not photo:
+                return self.flash("Could not use that image.")
+            if photo:
+                b.account(self.account)["photo"] = photo
+                b.save_accounts()
+        elif c == "account_photo_remove":
+            b.account(self.account)["photo"] = ""
+            b.save_accounts()
+        elif c == "account_remove":
+            acct = b.account(self.account)
+            if self.account == "default" or QMessageBox.question(
+                    self, "Remove account", f"Remove {acct['name']} from JUDO Browser?\n\nIts windows close. "
+                    "Its saved site data stays on this PC.") != QMessageBox.StandardButton.Yes:
+                return
+            if accounts.remove(data, self.account):
+                b.save_accounts()
+                for w in [x for x in b.windows if x.account == acct["id"]]:
+                    w.close()
+                if not b.windows:
+                    b.new_window(account="default")
+        elif c == "account_signout":
+            if QMessageBox.question(self, "Sign out", "Sign out of all websites in this account?\n\n"
+                                    "Cookies and site logins are cleared; history, bookmarks and saved "
+                                    "passwords stay.") != QMessageBox.StandardButton.Yes:
+                return
+            self.profile.cookieStore().deleteAllCookies()
+            self.profile.clearHttpCache()
+            self.flash("Signed out of all websites in this account")
 
     def customize(self) -> None:
         """⋮ → Customize JUDO: the New Tab page with its Customize panel open."""
@@ -794,7 +899,8 @@ class MainWindow(QMainWindow):
         self.tab_strip.setTabText(i, "" if self.is_pinned(i) else (title or "New Tab"))
         self.tab_strip.setTabToolTip(i, title)
         if v is self.view():
-            self.setWindowTitle(f"{title or 'New Tab'} - JUDO Browser" + (" (Incognito)" if self.incognito else ""))
+            self.setWindowTitle(f"{title or 'New Tab'} - JUDO Browser" + (" (Incognito)" if self.incognito else "")
+                                + self._title_suffix)
 
     def _set_icon(self, v, icon) -> None:
         if not getattr(v, "_loading", False):
@@ -940,9 +1046,9 @@ class MainWindow(QMainWindow):
                 b.clicked.disconnect()
             except TypeError:
                 pass
-        self.info_save.clicked.connect(lambda: (self.browser.passwords.put(origin, username, password),
+        self.info_save.clicked.connect(lambda: (self.passwords.put(origin, username, password),
                                                 self.info_bar.hide(), self.flash("Password saved")))
-        self.info_never.clicked.connect(lambda: (self.browser.passwords.block(origin), self.info_bar.hide()))
+        self.info_never.clicked.connect(lambda: (self.passwords.block(origin), self.info_bar.hide()))
         self.info_bar.show()
 
     # find in page
