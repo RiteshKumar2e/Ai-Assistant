@@ -269,7 +269,7 @@ header a:hover{text-decoration:underline}
 .a-group .a-row:last-child{border-radius:4px 4px 24px 24px}
 .a-row:hover{background:__ROW_HOVER__}
 .a-manage{margin-top:10px;border-radius:24px}
-.r-row{cursor:default;font-weight:400}.r-row span{flex:1}.r-row:hover{background:__CARD__}
+.r-row{cursor:default;font-weight:400}.r-row > span:not(.av){flex:1}.r-row:hover{background:__CARD__}
 .jlogo{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
  background:conic-gradient(#EA4335 0 25%,#FBBC05 0 50%,#34A853 0 75%,#4285F4 0)}
 .jlogo b{width:14px;height:14px;border-radius:50%;background:__CARD__;color:#4285F4;font:700 10px/14px 'Segoe UI';
