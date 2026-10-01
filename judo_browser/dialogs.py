@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboB
                              QListWidgetItem, QMessageBox, QPushButton, QRadioButton, QTableWidget,
                              QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
+from judo_browser import theme
 from judo_browser.app_data import SEARCH_ENGINES, save
 
 RANGES = {"Last hour": 3600, "Last 24 hours": 86400, "Last 7 days": 7 * 86400, "Last 4 weeks": 28 * 86400,
@@ -189,8 +190,9 @@ class Settings(QDialog):
             self.engine.addItem(name, key)
         self.engine.setCurrentIndex(list(SEARCH_ENGINES).index(s["search_engine"]))
         self.theme = QComboBox()
-        self.theme.addItems(["system", "light", "dark"])
-        self.theme.setCurrentText(s["theme"])
+        for key, label in theme.MODES.items():
+            self.theme.addItem(label, key)
+        self.theme.setCurrentIndex(list(theme.MODES).index(s["theme"]))
         self.home = QLineEdit(s["home_page"], placeholderText="Empty = New Tab page")
         self.show_home, self.show_bar = QCheckBox("Show home button"), QCheckBox("Show bookmarks bar")
         self.show_home.setChecked(s["show_home"])
@@ -305,8 +307,8 @@ class Settings(QDialog):
         s["show_home"], s["show_bookmarks_bar"] = self.show_home.isChecked(), self.show_bar.isChecked()
         s["download_dir"] = "" if self.dl_dir.text() == str(self.b.download_dir(default=True)) else self.dl_dir.text()
         s["ask_download_location"], s["offer_passwords"] = self.ask_dl.isChecked(), self.offer.isChecked()
-        theme_changed = s["theme"] != self.theme.currentText()
-        s["theme"], s["sandbox"] = self.theme.currentText(), self.sandbox.isChecked()
+        theme_changed = s["theme"] != self.theme.currentData()
+        s["theme"], s["sandbox"] = self.theme.currentData(), self.sandbox.isChecked()
         self.b.save_settings()
         self.b.apply_settings(theme_changed)
         self.accept()

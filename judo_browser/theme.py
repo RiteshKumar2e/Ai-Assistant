@@ -13,13 +13,13 @@ from PyQt6.QtSvg import QSvgRenderer
 THEMES = {
     "light": dict(frame="#DEE1E6", tab="#FFFFFF", toolbar="#FFFFFF", omni="#F1F3F4", omni_focus="#FFFFFF",
                   text="#202124", sub="#5F6368", icon="#5F6368", hover="#E8EAED", hover_frame="#CDD0D6",
-                  accent="#1A73E8", border="#DADCE0", popup="#FFFFFF", select="#E8F0FE"),
+                  accent="#1A73E8", border="#DADCE0", popup="#FFFFFF", select="#E8F0FE", dark=False),
     "dark": dict(frame="#202124", tab="#35363A", toolbar="#35363A", omni="#202124", omni_focus="#202124",
                  text="#E8EAED", sub="#9AA0A6", icon="#C4C7C5", hover="#4A4C50", hover_frame="#2E3033",
-                 accent="#8AB4F8", border="#5F6368", popup="#2D2E30", select="#394457"),
+                 accent="#8AB4F8", border="#5F6368", popup="#2D2E30", select="#394457", dark=True),
     "incognito": dict(frame="#202124", tab="#35363A", toolbar="#35363A", omni="#202124", omni_focus="#202124",
                       text="#E8EAED", sub="#9AA0A6", icon="#C4C7C5", hover="#4A4C50", hover_frame="#2E3033",
-                      accent="#8AB4F8", border="#5F6368", popup="#2D2E30", select="#394457"),
+                      accent="#8AB4F8", border="#5F6368", popup="#2D2E30", select="#394457", dark=True),
 }
 
 # Material Design icon paths (24×24 viewBox)
@@ -63,12 +63,50 @@ PATHS = {
 }
 
 
-def resolve(name: str) -> dict:
-    """"system" follows Windows' own light/dark setting, like Chrome does."""
+# "Customize JUDO" colour themes, like Chrome's: one seed colour tints the whole frame.
+COLORS = {"Blue": "#4285F4", "Cool grey": "#8D9BAF", "Aqua": "#24A1C1", "Green": "#34A853",
+          "Viridian": "#0E9F8A", "Citron": "#C0B42C", "Orange": "#F29900", "Apricot": "#E8845C",
+          "Rose": "#D9576E", "Pink": "#E25FA4", "Fuchsia": "#B44FC9", "Violet": "#7E69E0"}
+
+
+def _mix(a: str, b: str, amount: float) -> str:
+    """`amount` of colour a over colour b."""
+    ca, cb = QColor(a), QColor(b)
+    ch = lambda x, y: round(x * amount + y * (1 - amount))
+    return QColor(ch(ca.red(), cb.red()), ch(ca.green(), cb.green()), ch(ca.blue(), cb.blue())).name().upper()
+
+
+MODES = {"light": "Light", "dark": "Dark", "system": "Device"}   # "Device" follows Windows' own setting
+
+
+def tinted(base: dict, seed: str, dark: bool) -> dict:
+    """Chrome-style colour theme: a strongly tinted frame, lightly tinted tabs and toolbar."""
+    if not QColor(seed).isValid():
+        return base
+    t = dict(base)
+    if dark:
+        t.update(frame=_mix(seed, "#1B1B1F", .22), hover_frame=_mix(seed, "#2A2A2E", .30),
+                 tab=_mix(seed, "#2B2B2F", .14), toolbar=_mix(seed, "#2B2B2F", .14),
+                 omni=_mix(seed, "#1B1B1F", .12), omni_focus=_mix(seed, "#1B1B1F", .12),
+                 hover=_mix(seed, "#3C3C40", .22), select=_mix(seed, "#2B2B2F", .35),
+                 accent=_mix(seed, "#FFFFFF", .55), popup=_mix(seed, "#2D2E30", .10))
+    else:
+        t.update(frame=_mix(seed, "#FFFFFF", .30), hover_frame=_mix(seed, "#FFFFFF", .42),
+                 tab=_mix(seed, "#FFFFFF", .06), toolbar=_mix(seed, "#FFFFFF", .06),
+                 omni=_mix(seed, "#FFFFFF", .14), omni_focus="#FFFFFF",
+                 hover=_mix(seed, "#FFFFFF", .20), select=_mix(seed, "#FFFFFF", .16),
+                 accent=_mix(seed, "#000000", .80), border=_mix(seed, "#DADCE0", .20))
+    return t
+
+
+def resolve(name: str, color: str = "") -> dict:
+    """"system" follows Windows' own light/dark setting, like Chrome does;
+    `color` (a hex seed from COLORS or the picker) tints it."""
     if name == "system":
         dark = QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
         name = "dark" if dark else "light"
-    return THEMES.get(name, THEMES["light"])
+    base = THEMES.get(name, THEMES["light"])
+    return tinted(base, color, name == "dark") if color else base
 
 
 @lru_cache(maxsize=256)

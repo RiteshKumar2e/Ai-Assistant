@@ -9,6 +9,8 @@ menu, bookmarks bar) and its everyday features: tab pin/mute/duplicate,
 reopen closed tab, session restore, per-site zoom, find bar, downloads,
 history, bookmarks, passwords (DPAPI-encrypted), incognito, print, save page,
 DevTools, view source, site permissions, light/dark themes, Chrome shortcuts.
+The New Tab page (newtab.py) is Google-style with the JUDO logo, shortcuts and
+a "Customize JUDO" panel: backgrounds, colour themes that tint the whole frame.
 
 Profile data (cookies/logins, cache, bookmarks, history, settings) lives in
 ~/.judo/browser/; incognito windows use an in-memory profile and record nothing.
@@ -16,11 +18,11 @@ Profile data (cookies/logins, cache, bookmarks, history, settings) lives in
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, QUrl
@@ -32,15 +34,12 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLi
                              QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QTabBar, QToolButton,
                              QVBoxLayout, QWidget, QWidgetAction)
 
-from judo_browser import dialogs, passwords, theme
+from judo_browser import dialogs, newtab, passwords, theme
 from judo_browser.app_data import DATA, SEARCH_ENGINES, load, load_settings, save
 
 HOME_URL = "judo:newtab"
 MAX_HISTORY = 5000
 EDGE = 6                   # px band along a frameless window's border that resizes it
-DEFAULT_TILES = [("Gmail", "https://mail.google.com"), ("YouTube", "https://www.youtube.com"),
-                 ("ChatGPT", "https://chatgpt.com"), ("GitHub", "https://github.com"),
-                 ("Google", "https://www.google.com"), ("News", "https://news.google.com")]
 _search_base = SEARCH_ENGINES["google"][1]
 
 
@@ -62,36 +61,6 @@ def chrome_user_agent() -> str:
             f"(KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36")
 
 
-def new_tab_html(browser, t: dict) -> str:
-    """Chrome's New Tab page: search box and most-visited shortcuts (letter
-    tiles — no favicon lookups leave the machine)."""
-    counts = Counter(QUrl(h["url"]).host() for h in browser.history if QUrl(h["url"]).host())
-    tiles = [(host.removeprefix("www.").split(".")[0].capitalize(), f"https://{host}") for host, _ in counts.most_common(8)]
-    for name, url in DEFAULT_TILES:
-        if len(tiles) < 8 and all(QUrl(url).host() != QUrl(u).host() for _, u in tiles):
-            tiles.append((name, url))
-    links = "".join(f'<a href="{html.escape(u)}"><b>{html.escape(n[:1])}</b><span>{html.escape(n)}</span></a>'
-                    for n, u in tiles)
-    engine = SEARCH_ENGINES[browser.settings["search_engine"]]
-    action, param = engine[1].split("?")[0], engine[1].split("?")[1].rstrip("=")
-    return f"""<!doctype html><html><head><meta charset="utf-8"><title>New Tab</title><style>
-body{{margin:0;background:{t['toolbar']};color:{t['text']};font:14px 'Segoe UI',system-ui,sans-serif;
- display:flex;justify-content:center;min-height:100vh}}main{{margin-top:18vh;width:min(584px,92vw);text-align:center}}
-h1{{font-weight:500;font-size:56px;letter-spacing:.06em;margin:0 0 30px;color:{t['text']}}}
-form{{display:flex;align-items:center;background:{t['omni']};border-radius:24px;padding:0 20px;height:46px;
- border:1px solid {t['border']}}}form:focus-within{{box-shadow:0 1px 6px #0003}}
-input{{flex:1;border:0;background:transparent;color:{t['text']};font-size:16px;outline:none;margin-left:12px}}
-.tiles{{display:grid;grid-template-columns:repeat(4,112px);gap:8px;justify-content:center;margin-top:34px}}
-a{{display:flex;flex-direction:column;align-items:center;padding:16px 4px;border-radius:8px;color:{t['text']};
- text-decoration:none}}a:hover{{background:{t['hover']}}}
-a b{{width:48px;height:48px;border-radius:50%;background:{t['omni']};display:grid;place-items:center;font-size:20px;
- margin-bottom:10px;color:{t['accent']}}}a span{{font-size:13px;max-width:100px;overflow:hidden;
- text-overflow:ellipsis;white-space:nowrap}}</style></head><body><main><h1>JUDO</h1>
-<form action="{action}"><span style="color:{t['sub']}">🔍</span>
-<input name="{param}" autofocus placeholder="Search {engine[0]} or type a URL"></form>
-<div class="tiles">{links}</div></main></body></html>"""
-
-
 CRASH_HTML = """<!doctype html><meta charset="utf-8"><body style="font:15px 'Segoe UI';display:grid;place-items:center;
 height:90vh;background:#fff;color:#202124"><div><h2>Aw, Snap!</h2><p>Something went wrong while displaying this page.</p>
 <p style="color:#5F6368">Reload the tab (F5) to try again.</p></div>"""
@@ -103,6 +72,7 @@ class Page(QWebEnginePage):
     def __init__(self, profile, win: "MainWindow"):
         super().__init__(profile, win)
         self.win = win
+        self.ntp = False                       # showing JUDO's New Tab page (set by MainWindow.load)
         self.fullScreenRequested.connect(self._fullscreen)
         if hasattr(self, "permissionRequested"):          # Qt >= 6.8
             self.permissionRequested.connect(self._permission)
@@ -111,8 +81,14 @@ class Page(QWebEnginePage):
         bg = kind == QWebEnginePage.WebWindowType.WebBrowserBackgroundTab
         return self.win.new_tab(background=bg, blank=True).page()   # the engine loads the target itself
 
-    def javaScriptConsoleMessage(self, *a):   # pages' console noise stays out of JUDO's log
-        pass
+    def javaScriptConsoleMessage(self, level, message, line, source):
+        # pages' console noise stays out of JUDO's log; only the New Tab page talks to us this way
+        if self.ntp and message.startswith(newtab.CMD):
+            try:
+                cmd = json.loads(message[len(newtab.CMD):])
+            except ValueError:
+                return
+            QTimer.singleShot(0, lambda: self.win.ntp_command(self, cmd))
 
     def _fullscreen(self, req):
         req.accept()
@@ -304,8 +280,12 @@ class Browser:
         self.downloads: list[QWebEngineDownloadRequest] = []
         self.windows: list[MainWindow] = []
         self.closed: list[str] = []             # for Ctrl+Shift+T
-        self.theme = theme.resolve(self.settings["theme"])
+        self.ntp_undo: list = []                # last removed New Tab shortcut, for its Undo
+        self.theme = theme.resolve(self.settings["theme"], self.settings["theme_color"])
         self.apply_settings(True)
+        # Device mode: re-theme the moment Windows switches between light and dark
+        app.styleHints().colorSchemeChanged.connect(
+            lambda _: self.apply_settings(True) if self.settings["theme"] == "system" else None)
         app.installEventFilter(EdgeResizer(app))
         self._session_timer = QTimer(singleShot=True, interval=1500)
         self._session_timer.timeout.connect(self.save_session)
@@ -361,15 +341,27 @@ class Browser:
     def save_settings(self) -> None:
         save("settings.json", self.settings)
 
-    def apply_settings(self, restyle: bool = False) -> None:
+    def apply_settings(self, restyle: bool = False, refresh_ntp: bool = True) -> None:
         global _search_base
         _search_base = SEARCH_ENGINES[self.settings["search_engine"]][1]
         if restyle:
-            self.theme = theme.resolve(self.settings["theme"])
+            self.theme = theme.resolve(self.settings["theme"], self.settings["theme_color"])
             self.app.setPalette(theme.palette(self.theme))
             self.app.setStyleSheet(theme.stylesheet(self.theme))
         for w in self.windows:
             w.apply_settings(restyle)
+        if restyle and refresh_ntp:
+            self.refresh_ntps()
+
+    def refresh_ntps(self, active=None, panel: bool = False, toast: str = "") -> None:
+        """Redraw every open New Tab page (new theme, shortcuts…); `active` keeps
+        its Customize panel open / shows a toast."""
+        for w in self.windows:
+            for i in range(w.tabs.count()):
+                v = w.tabs.widget(i)
+                if v.page().ntp:
+                    mine = v.page() is active
+                    w.load(QUrl(HOME_URL), v, panel=mine and panel, toast=toast if mine else "")
 
     # history / bookmarks
     def record(self, url: str, title: str) -> None:
@@ -720,12 +712,60 @@ class MainWindow(QMainWindow):
         v.page().setAudioMuted(not v.page().isAudioMuted())
         self._audio(v)
 
-    def load(self, url: QUrl, view: QWebEngineView | None = None) -> None:
+    def load(self, url: QUrl, view: QWebEngineView | None = None, panel: bool = False, toast: str = "") -> None:
         view = view or self.view()
-        if url.toString() == HOME_URL:
-            view.setHtml(new_tab_html(self.browser, self.t), QUrl("about:blank"))
+        view.page().ntp = url.toString() == HOME_URL
+        if view.page().ntp:
+            view.setHtml(newtab.page(self.browser.settings, self.browser.history, self.t, incognito=self.incognito,
+                                     panel=panel, toast=toast, chromium=f"Chromium {qWebEngineChromiumVersion()}"),
+                         QUrl("about:blank"))
         else:
             view.load(url)
+
+    def ntp_command(self, page, cmd: dict) -> None:
+        """A click on the New Tab page (shortcut edit, Customize JUDO…)."""
+        if self.incognito:
+            return
+        b = self.browser
+        effect = newtab.apply(b.settings, cmd, b.ntp_undo)
+        if effect == "pick_bg":
+            path, _ = QFileDialog.getOpenFileName(self, "Choose a background image", str(Path.home() / "Pictures"),
+                                                  "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)")
+            if not path:
+                return
+            if not newtab.set_custom_background(path, b.settings):
+                return self.flash("Could not use that image.")
+            effect = "refresh"
+        if effect is None:
+            return
+        if effect.startswith("open:"):
+            return getattr(self, effect[5:])()
+        b.save_settings()
+        if effect == "restyle":
+            b.apply_settings(True, refresh_ntp=False)
+        b.refresh_ntps(active=page, panel=bool(cmd.get("panel")), toast="removed" if effect == "removed" else "")
+
+    def set_mode(self, mode: str) -> None:
+        """⋮ → Appearance: Light / Dark / Device."""
+        self.browser.settings["theme"] = mode
+        self.browser.save_settings()
+        self.browser.apply_settings(True)
+
+    def _fill_appearance_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        for key, label in theme.MODES.items():
+            a = menu.addAction(label, lambda k=key: self.set_mode(k))
+            a.setCheckable(True)
+            a.setChecked(self.browser.settings["theme"] == key)
+        menu.addSeparator()
+        menu.addAction("Colours and background…", self.customize)
+
+    def customize(self) -> None:
+        """⋮ → Customize JUDO: the New Tab page with its Customize panel open."""
+        v = self.view()
+        if not (v and v.page().ntp):
+            v = self.new_tab(blank=True)
+        self.load(QUrl(HOME_URL), v, panel=True)
 
     def _navigate(self, text: str) -> None:
         internal = {"judo://settings": self.settings, "chrome://settings": self.settings,
@@ -782,6 +822,8 @@ class MainWindow(QMainWindow):
         self.browser.session_changed()
 
     def _url_changed(self, v, u: QUrl) -> None:
+        if u.toString() not in ("", "about:blank"):
+            v.page().ntp = False                 # navigated away from the New Tab page
         if v is self.view():
             self._sync_omnibox(v)
         self.browser.session_changed()
@@ -1014,6 +1056,9 @@ class MainWindow(QMainWindow):
         tools.addAction("Developer tools\tCtrl+Shift+I", self.devtools)
         tools.addAction("View page source\tCtrl+U", lambda: self.new_tab(QUrl("view-source:" + self.view().url().toString())))
         m.addSeparator()
+        look = m.addMenu("Appearance")
+        look.aboutToShow.connect(lambda: self._fill_appearance_menu(look))
+        m.addAction("Customize JUDO", self.customize)
         m.addAction("Settings", self.settings)
         m.addAction("About JUDO Browser", lambda: QMessageBox.about(
             self, "About JUDO Browser", f"JUDO Browser\nChromium {qWebEngineChromiumVersion()}"))

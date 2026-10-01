@@ -109,3 +109,63 @@ def test_settings_fill_missing_keys_with_defaults(tmp_path, monkeypatch):
     ad.save("settings.json", {"theme": "dark"})
     s = ad.load_settings()
     assert s["theme"] == "dark" and s["sandbox"] is False and s["search_engine"] == "google"
+
+
+def _ntp_settings():
+    import json as _json
+    from judo_browser.app_data import DEFAULT_SETTINGS
+    return _json.loads(_json.dumps(DEFAULT_SETTINGS))
+
+
+def test_new_tab_shortcuts_add_edit_remove_undo():
+    pytest.importorskip("PyQt6.QtWebEngineCore")
+    from judo_browser import newtab
+    s, undo = _ntp_settings(), []
+    hist = [{"url": "https://www.youtube.com/watch?v=1", "title": "v"}] * 3 + [{"url": "https://amazon.in/x", "title": "a"}]
+    assert [t["title"] for t in newtab.tiles(s, hist)][:2] == ["YouTube", "Amazon"]      # most visited first
+    assert newtab.apply(s, {"cmd": "add", "title": "", "url": "judo.ai"}, undo) == "refresh"
+    assert s["shortcuts"] == [{"title": "Judo", "url": "https://judo.ai"}]
+    assert newtab.tiles(s, hist)[0]["custom"] is True
+    assert newtab.apply(s, {"cmd": "add", "url": "javascript:alert(1)"}, undo) is None    # only web addresses
+    assert newtab.apply(s, {"cmd": "edit", "old": "https://www.youtube.com", "title": "YT", "url": "youtube.com"}, undo)
+    assert "youtube.com" in s["hidden_tiles"] and s["shortcuts"][-1]["title"] == "YT"
+    assert newtab.apply(s, {"cmd": "remove", "url": "https://amazon.in"}, undo) == "removed"
+    assert all(t["title"] != "Amazon" for t in newtab.tiles(s, hist))
+    assert newtab.apply(s, {"cmd": "undo"}, undo) == "refresh" and "amazon.in" not in s["hidden_tiles"]
+    assert newtab.apply(s, {"cmd": "restore_tiles"}, undo) and s["shortcuts"] == s["hidden_tiles"] == []
+    assert len(newtab.tiles(s, hist)) <= newtab.MAX_TILES
+
+
+def test_customize_commands_validate_and_report_what_to_redraw():
+    pytest.importorskip("PyQt6.QtWebEngineCore")
+    from judo_browser import newtab
+    s, undo = _ntp_settings(), []
+    assert newtab.apply(s, {"cmd": "color", "color": "#e25fa4"}, undo) == "restyle" and s["theme_color"] == "#E25FA4"
+    assert newtab.apply(s, {"cmd": "color", "color": "red;}body{"}, undo) is None and s["theme_color"] == "#E25FA4"
+    assert newtab.apply(s, {"cmd": "mode", "mode": "dark"}, undo) == "restyle" and s["theme"] == "dark"
+    assert newtab.apply(s, {"cmd": "bg", "id": "aurora"}, undo) == "refresh" and s["ntp_background"] == "aurora"
+    assert newtab.apply(s, {"cmd": "bg", "id": "../../x"}, undo) is None
+    assert newtab.apply(s, {"cmd": "upload_bg"}, undo) == "pick_bg"
+    assert newtab.apply(s, {"cmd": "open", "page": "history"}, undo) == "open:history"
+    assert newtab.apply(s, {"cmd": "open", "page": "close"}, undo) is None                # only the four pages
+    assert newtab.apply(s, {"cmd": "reset"}, undo) == "restyle" and s["theme_color"] == s["ntp_background"] == ""
+
+
+def test_new_tab_page_shows_judo_logo_and_theme():
+    pytest.importorskip("PyQt6.QtWebEngineCore")
+    from judo_browser import newtab, theme
+    s = _ntp_settings()
+    s.update(ntp_background="sunset")
+    page = newtab.page(s, [], theme.resolve("light"), panel=True)
+    assert '<span class="l1">J</span><span class="l2">U</span><span class="l3">D</span><span class="l4">O</span>' in page
+    assert "Customize JUDO" in page and 'id="panel" class="show"' in page and "on-dark" in page
+    assert "Incognito" in newtab.page(s, [], theme.THEMES["incognito"], incognito=True)
+
+
+def test_colour_theme_tints_frame_light_and_dark():
+    pytest.importorskip("PyQt6.QtGui")
+    from judo_browser import theme
+    light, dark = theme.resolve("light", "#34A853"), theme.resolve("dark", "#34A853")
+    assert light["frame"] != theme.THEMES["light"]["frame"] and light["text"] == theme.THEMES["light"]["text"]
+    assert dark["dark"] is True and dark["frame"] != theme.THEMES["dark"]["frame"]
+    assert theme.resolve("light", "") == theme.THEMES["light"] and theme.resolve("light", "nope") == theme.THEMES["light"]

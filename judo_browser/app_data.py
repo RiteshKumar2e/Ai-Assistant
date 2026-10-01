@@ -8,6 +8,12 @@ DATA = Path.home() / ".judo" / "browser"
 
 DEFAULT_SETTINGS = {
     "theme": "system",                 # system | light | dark
+    "theme_color": "",                 # "" = classic grey, else a hex seed that tints the frame (Customize JUDO)
+    "ntp_background": "",              # "" | a newtab.BACKGROUNDS id | "custom" (ntp_background.jpg)
+    "ntp_show_shortcuts": True,
+    "ntp_shortcut_mode": "custom",     # custom (my shortcuts + most visited) | most_visited
+    "shortcuts": [],                   # [{title, url}] added on the New Tab page
+    "hidden_tiles": [],                # most-visited hosts removed from the New Tab page
     "startup": "continue",             # newtab | continue | page
     "startup_page": "",
     "search_engine": "google",         # google | bing | duckduckgo
