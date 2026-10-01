@@ -220,7 +220,7 @@ placeholder="you@example.com"><div class="actions"><button type="button" class="
 {cmd("open", "Open bookmarks", page="bookmarks")}</div>
 <div class="card"><div class="pad"><h3>Cookies &amp; site logins</h3>
 <p>Signing out clears this account's cookies and site logins. History, bookmarks and passwords stay.</p></div>
-{cmd("account_signout", "Sign out of all websites")}</div>
+{cmd("account_signout", "Sign out of this account")}</div>
 <div class="card"><div class="pad"><h3>Download your data</h3>
 <p>A copy of your profile, bookmarks, history and settings as a JSON file (no passwords).</p></div>
 {cmd("account_export", "Download your data")}</div>"""
@@ -239,7 +239,7 @@ placeholder="you@example.com"><div class="actions"><button type="button" class="
 <label class="row"><span class="k">Offer to save</span><span class="v">Ask to save passwords when you sign in</span>
 <span class="switch"><input type="checkbox" id="offer" {"checked" if stats["offer_passwords"] else ""}><i></i></span></label></div>
 <div class="card"><div class="pad"><h3>Signed-in sites</h3><p>Lost a device or used a shared PC? Sign out everywhere in this account.</p></div>
-{cmd("account_signout", "Sign out of all websites")}</div>"""
+{cmd("account_signout", "Sign out of this account")}</div>"""
 
     acct_rows = f"""<div class="row static">{_avatar(account, "")}<span class="v">{name}<span class="tag">This account</span>
 <small>{email or "JUDO Account"}</small></span></div>""" + "".join(

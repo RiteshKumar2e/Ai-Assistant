@@ -215,6 +215,16 @@ def test_account_popup_on_new_tab_page():
     other = {"id": "a1", "name": "Work", "email": "", "color": "#188038", "photo": ""}
     page = newtab.page(_ntp_settings(), [], theme.resolve("light"), account=me, others=[other])
     assert 'id="avatarBtn"' in page and "Hi, Ritesh!" in page and "Manage your JUDO Account" in page
-    assert 'data-switch="a1"' in page and "Add another account" in page and "Sign out of all websites" in page
+    assert 'data-switch="a1"' in page and "Add another account" in page and "Sign out of all accounts" in page and "Remove an account" in page
     assert "<script>" not in newtab.page(_ntp_settings(), [], theme.resolve("light"),
                                          account=dict(me, name="<script>x"), others=[]).split("<script>const")[0]
+
+
+def test_about_page_says_who_made_it():
+    pytest.importorskip("PyQt6.QtWebEngineCore")
+    from judo_browser import RELEASE, __version__, about_page, theme
+    info = {"chromium": "140.0", "qt": "6.11", "pyqt": "6.11", "python": "3.10", "os": "Windows",
+            "sandbox": True, "accounts": 1, "profile": "C:/x"}
+    page = about_page.page(theme.resolve("light"), info)
+    assert "Made with" in page and "Ritesh" in page and __version__ in page and RELEASE in page
+    assert "Chromium 140.0" in page and "Copy details" in page
