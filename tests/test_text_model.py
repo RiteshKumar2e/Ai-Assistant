@@ -236,7 +236,8 @@ def test_generate_content_falls_back_to_gemini_when_groq_exhausted(monkeypatch):
             return _FakeGeminiResponse()
 
     class _FakeClient:
-        def __init__(self, api_key):
+        def __init__(self, api_key, http_options=None):
+            assert http_options and http_options["timeout"] > 0   # an unanswered call must not hang forever
             self.models = _FakeModels()
 
     fake_genai_module = type("FakeGenaiModule", (), {"Client": _FakeClient})
@@ -267,7 +268,8 @@ def test_multimodal_content_skips_groq_entirely(monkeypatch):
             return _FakeGeminiResponse()
 
     class _FakeClient:
-        def __init__(self, api_key):
+        def __init__(self, api_key, http_options=None):
+            assert http_options and http_options["timeout"] > 0   # an unanswered call must not hang forever
             self.models = _FakeModels()
 
     import types as _types
@@ -326,7 +328,7 @@ def _fake_genai(monkeypatch, behaviour):
             return type("R", (), {"text": result})()
 
     class _Client:
-        def __init__(self, api_key):
+        def __init__(self, api_key, http_options=None):
             self.models = _Models(api_key)
 
     mod = _types.ModuleType("genai")

@@ -232,7 +232,9 @@ def _gemini_over_keys(call, chain: list[str], keys: list[str], what: str) -> str
             if key in rejected or _gemini_paused.get((key, model), 0) > time.monotonic():
                 continue
             try:
-                client = clients.setdefault(key, genai.Client(api_key=key))
+                # 120 s cap, like the Groq calls: without it one unanswered request (Gemini
+                # was throwing 500/503s) blocked the seed generator's worker for good.
+                client = clients.setdefault(key, genai.Client(api_key=key, http_options={"timeout": 120_000}))
                 return call(client, model)
             except Exception as e:
                 last_err = e
