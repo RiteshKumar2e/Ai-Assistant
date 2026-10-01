@@ -77,8 +77,14 @@ def _web_url(text: str) -> str | None:
     return u.toString() if u.isValid() and u.scheme() in ("http", "https") and u.host() else None
 
 
+def has_add_tile(settings: dict) -> bool:
+    return settings["ntp_shortcut_mode"] == "custom" and len(settings["shortcuts"]) < MAX_TILES
+
+
 def tiles(settings: dict, history: list[dict]) -> list[dict]:
-    """Chrome's shortcut row: my shortcuts first (custom mode), then most visited, then defaults."""
+    """Chrome's shortcut grid: my shortcuts first (custom mode), then most visited, then
+    defaults — MAX_TILES in all, counting the "Add shortcut" tile when it is shown."""
+    limit = MAX_TILES - 1 if has_add_tile(settings) else MAX_TILES
     out = []
     if settings["ntp_shortcut_mode"] == "custom":
         out += [{"title": s["title"], "url": s["url"], "custom": True} for s in settings["shortcuts"]]
@@ -86,13 +92,13 @@ def tiles(settings: dict, history: list[dict]) -> list[dict]:
     visited = Counter(QUrl(h["url"]).host() for h in history if QUrl(h["url"]).host())
     candidates = [(_name(_host("https://" + h)), "https://" + h) for h, _ in visited.most_common()] + DEFAULT_TILES
     for title, url in candidates:
-        if len(out) >= MAX_TILES:
+        if len(out) >= limit:
             break
         h = _host(url)
         if h not in hidden and h not in seen:
             out.append({"title": title, "url": url, "custom": False})
             seen.add(h)
-    return out[:MAX_TILES]
+    return out[:limit]
 
 
 def apply(settings: dict, cmd: dict, undo: list) -> str | None:
@@ -272,6 +278,7 @@ main{display:flex;flex-direction:column;align-items:center;padding-top:max(13vh,
 .on-dark .tile span{text-shadow:0 1px 4px rgba(0,0,0,.6)}
 .tile .more{position:absolute;top:2px;right:2px;width:28px;height:28px;opacity:0}
 .tile:hover .more{opacity:1}
+.tile .more:hover{background:__HOVER__}
 .tile .more svg{width:16px;height:16px}
 .add .bubble svg{color:__TEXT__}
 .on-dark .add .bubble svg{color:#202124}
@@ -417,8 +424,21 @@ list.addEventListener('mousedown', e => {
 $('#clear').onclick = () => { q.value = ''; box.classList.remove('typed'); items = []; render(); q.focus(); };
 $('#searchIcon').onclick = () => go(q.value);
 
-// ── favicons that fail to load fall back to a letter ──
-$$('.bubble img, #apps img').forEach(img => img.addEventListener('error', () => img.parentNode.classList.add('noimg')));
+// ── favicons: the site's icon, else its main domain's (web.whatsapp.com -> whatsapp.com), else
+// its first letter. Google's service answers "no icon" with a 16px globe, not an error.
+$$('.bubble img, #apps img').forEach(img => {
+  const host = new URL(img.src).searchParams.get('domain') || '';
+  const parts = host.split('.'), tries = parts.length > 2 ? [parts.slice(-2).join('.')] : [];
+  const next = () => {
+    const h = tries.shift();
+    if (h) img.src = 'https://www.google.com/s2/favicons?sz=64&domain=' + h;
+    else img.parentNode.classList.add('noimg');
+  };
+  const check = () => { if (img.naturalWidth && img.naturalWidth <= 16) next(); };
+  img.addEventListener('error', next);
+  img.addEventListener('load', check);
+  if (img.complete) img.naturalWidth ? check() : next();   // may have loaded before this script ran
+});
 
 // ── popups ──
 const menu = $('#menu'), apps = $('#apps');
@@ -426,13 +446,19 @@ let menuTile = null;
 function hidePopups() { menu.classList.remove('show'); apps.classList.remove('show'); }
 document.addEventListener('click', e => { if (!e.target.closest('.popup, .more, #appsBtn')) hidePopups(); });
 $('#appsBtn').onclick = () => { menu.classList.remove('show'); apps.classList.toggle('show'); };
+function showMenu(tile, x, y) {
+  menuTile = tile;
+  menu.style.left = Math.min(x, innerWidth - 190) + 'px'; menu.style.top = Math.min(y, innerHeight - 100) + 'px';
+  apps.classList.remove('show'); menu.classList.add('show');
+}
 $$('.tile .more').forEach(b => b.onclick = e => {
   e.preventDefault(); e.stopPropagation();
-  menuTile = b.closest('.tile');
   const r = b.getBoundingClientRect();
-  menu.style.left = Math.min(r.left, innerWidth - 190) + 'px'; menu.style.top = (r.bottom + 4) + 'px';
-  apps.classList.remove('show'); menu.classList.add('show');
+  showMenu(b.closest('.tile'), r.left, r.bottom + 4);
 });
+$$('.tile:not(.add)').forEach(t => t.addEventListener('contextmenu', e => {
+  e.preventDefault(); showMenu(t, e.clientX, e.clientY);
+}));
 $('#mEdit').onclick = () => { hidePopups(); openModal(menuTile.dataset.title, menuTile.dataset.url); };
 $('#mRemove').onclick = () => { hidePopups(); send({cmd: 'remove', url: menuTile.dataset.url}); };
 
@@ -520,7 +546,7 @@ def page(settings: dict, history: list[dict], t: dict, *, incognito: bool = Fals
                           f'<button class="icon-btn more" title="More actions">{SVG["more"]}</button>'
                           f'<div class="bubble"><img src="{_favicon(x["url"])}" alt=""><b>{title[:1]}</b></div>'
                           f'<span>{title}</span></a>')
-        if settings["ntp_shortcut_mode"] == "custom" and len(settings["shortcuts"]) < MAX_TILES:
+        if has_add_tile(settings):
             tile_html += f'<a class="tile add" href="#"><div class="bubble">{SVG["add"]}</div><span>Add shortcut</span></a>'
         tile_html = f'<div class="tiles">{tile_html}</div>'
 

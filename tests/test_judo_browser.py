@@ -178,3 +178,13 @@ def test_colour_theme_tints_frame_light_and_dark():
     assert light["frame"] != theme.THEMES["light"]["frame"] and light["text"] == theme.THEMES["light"]["text"]
     assert dark["dark"] is True and dark["frame"] != theme.THEMES["dark"]["frame"]
     assert theme.resolve("light", "") == theme.THEMES["light"] and theme.resolve("light", "nope") == theme.THEMES["light"]
+
+
+def test_add_shortcut_tile_counts_toward_the_ten():
+    pytest.importorskip("PyQt6.QtWebEngineCore")
+    from judo_browser import newtab
+    s = _ntp_settings()
+    hist = [{"url": f"https://site{i}.com/", "title": str(i)} for i in range(20)]
+    assert newtab.has_add_tile(s) and len(newtab.tiles(s, hist)) == newtab.MAX_TILES - 1
+    s["ntp_shortcut_mode"] = "most_visited"
+    assert not newtab.has_add_tile(s) and len(newtab.tiles(s, hist)) == newtab.MAX_TILES
