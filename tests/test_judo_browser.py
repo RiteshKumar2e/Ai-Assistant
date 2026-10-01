@@ -192,7 +192,9 @@ def test_add_shortcut_tile_counts_toward_the_ten():
 
 def test_judo_accounts_add_edit_remove_and_keep_their_own_storage(tmp_path, monkeypatch):
     import judo_browser.accounts as acc
+    import judo_browser.app_data as ad
     monkeypatch.setattr(acc, "DATA", tmp_path)
+    monkeypatch.setattr(ad, "DATA", tmp_path)             # load/save live in app_data
     data = acc.load_all()
     assert [a["id"] for a in data["list"]] == ["default"] and data["current"] == "default"
     assert acc.add(data, {"name": "  ", "email": ""}) is None                        # a name is required
