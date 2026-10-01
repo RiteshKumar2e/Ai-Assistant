@@ -1411,12 +1411,13 @@ class JudoLive:
 
     async def _send_startup_briefing(self) -> None:
         """
-        Two-phase briefing optimized for speed:
-          Phase 1 — instant greeting (no tools) → speech starts in <1s
-          Phase 2 — news pre-fetched in a background thread while Phase 1 plays,
-                    delivered as ready text (no Gemini tool-call round-trip) and
-                    shown on the UI content panel. Waits for turn_complete event
-                    instead of a fixed sleep so there is no unnecessary gap.
+        JUDO says hello first, like a person would when you sit down:
+          Phase 1 — instant greeting (no tools) that ends in one question (how
+                    they are, the day's plan, or how last time's thing went) —
+                    speech starts in <1s, then JUDO waits for the answer
+          Phase 2 — news pre-fetched in a background thread, shown quietly on the
+                    UI content panel. It is not read out: reading headlines right
+                    after asking a question would talk over the answer.
         """
         memory   = load_memory()
         identity = memory.get("identity", {})
@@ -1432,6 +1433,9 @@ class JudoLive:
         lang = _val("language") or "Hindi"
         name = _val("name")
         time_str = datetime.now().strftime("%H:%M")
+        from actions.proactive import day_period
+        _, period, greeting, ask = day_period()
+        self._proactive.mark_greeted()        # this hello is the greeting for this part of the day
 
         # Start fetching news immediately — runs in parallel while phase 1 plays
         loop = asyncio.get_event_loop()
@@ -1460,12 +1464,15 @@ class JudoLive:
             except Exception:
                 _when = "last time"
             session_clause = (
-                f" Also briefly and naturally mention that {_when}: {last['summary']}"
+                f" What happened {_when}: {last['summary']} — your question can follow up on that."
             )
 
         p1 = (
-            f"Greet the user warmly, mention it is {time_str}, and say you are fetching today's news now.{session_clause} "
-            f"Keep it to 2 short sentences max. Do not call any tools.{lang_clause}{name_clause}"
+            f"You just started up and the user is at the computer. It is {time_str} ({period}). "
+            f"Say hello first, the way a friend would: open with \"{greeting}\" (in their language), "
+            f"warm and casual, and end with ONE short question — {ask}, or how last time's thing went."
+            f"{session_clause} At most 2 short sentences; no formal phrases, no lists. "
+            f"Do not mention news. Do not call any tools.{lang_clause}{name_clause}"
         )
 
         # Clear the turn-done event so we can wait for Phase 1 to finish
@@ -1478,64 +1485,17 @@ class JudoLive:
         )
         self.ui.write_log("SYS: Briefing phase 1 (greeting) sent.")
 
-        # ── Phase 2: fire as soon as Phase 1 audio is done ───────────────────
+        # ── Phase 2: today's headlines, on screen once they arrive ────────────
         async def _deliver_news():
             try:
-                lang_str = (f" Speak in {lang} unless the user has since "
-                            f"spoken another language, in which case use theirs."
-                            if lang else "")
-
-                # Wait for news fetch (already running) and Phase 1 turn-complete
-                # in parallel — whichever takes longer determines the wait time
-                news_done   = asyncio.wrap_future(news_future)
-                turn_waited = False
-                if self._turn_done_event:
-                    try:
-                        await asyncio.wait_for(self._turn_done_event.wait(), timeout=6.0)
-                        turn_waited = True
-                    except asyncio.TimeoutError:
-                        pass
-
-                # Extra buffer: turn_complete fires when Gemini finishes *generating*
-                # Phase 1, but audio may still be playing.  Waiting a beat here
-                # prevents Phase 2 audio from arriving while Phase 1 is mid-sentence
-                # (which sounds like a "repeated first response" to the user).
-                if turn_waited:
-                    await asyncio.sleep(0.8)
-                else:
-                    await asyncio.sleep(1.0)
-
-                try:
-                    news_text = await asyncio.wait_for(news_done, timeout=4.0)
-                except Exception:
-                    news_text = ""
-
-                if not self.session:
-                    return
-
-                if news_text and len(news_text) > 60:
-                    # Show on UI content panel immediately
-                    self.ui.show_content("NEWS — top world news today", news_text)
-
-                    p2 = (
-                        f"[BRIEFING] Here are today's top news headlines:\n{news_text}\n\n"
-                        "Pick ONE headline, summarise it in one sentence, then say the full list "
-                        f"is displayed on screen. Do not call any tools.{lang_str}"
-                    )
-                else:
-                    p2 = (
-                        "News headlines could not be fetched right now. "
-                        f"Let the user know briefly.{lang_str}"
-                    )
-
-                await self.session.send_client_content(
-                    turns={"role": "user", "parts": [{"text": p2}]},
-                    turn_complete=True,
-                )
-                self.ui.write_log("SYS: Briefing phase 2 (news) sent.")
-            except Exception as e:
-                print(f"[Briefing] Phase 2 error: {e}")
-                self.ui.write_log(f"SYS: Briefing phase 2 failed: {e}")
+                news_text = await asyncio.wait_for(asyncio.wrap_future(news_future), timeout=20.0)
+            except Exception:
+                news_text = ""
+            if self.session and news_text and len(news_text) > 60:
+                # On screen only — JUDO just asked a question and is waiting for the answer.
+                # It can still talk about these if the user asks ("aaj ki news?").
+                self.ui.show_content("NEWS — top world news today", news_text)
+                self.ui.write_log("SYS: Briefing news shown on screen.")
 
         asyncio.create_task(_deliver_news())
 
@@ -1656,13 +1616,49 @@ class JudoLive:
                     monitors     = monitors or None,
                     recent_turns = recent_turns or None,
                 )
+                start = len(self._session_log)
                 await self.session.send_client_content(
                     turns={"role": "user", "parts": [{"text": prompt}]},
                     turn_complete=True,
                 )
                 self.ui.write_log("SYS: Proactive check-in.")
+                asyncio.create_task(self._learn_from_checkin(start, self._proactive.last_focus))
             except Exception as e:
                 print(f"[Proactive] ⚠️ {e}")
+
+    async def _learn_from_checkin(self, start: int, focus: str) -> None:
+        """After a check-in, wait for the conversation it started to settle, then
+        keep what it taught: facts about the user go to long-term memory, and the
+        whole exchange goes to memory/human_conversations.jsonl (training data)."""
+        from actions.proactive import fact_prompt, parse_facts, record_exchange, split_exchange
+        deadline, settled, seen = time.monotonic() + 540, 0, -1
+        while time.monotonic() < deadline:
+            await asyncio.sleep(5)
+            if len(self._session_log) < start:          # the session was reset — nothing to learn
+                return
+            n = len(self._session_log)
+            answered = any(l.startswith("User:") for l in self._session_log[start:])
+            settled = settled + 5 if n == seen else 0
+            seen = n
+            if answered and settled >= 45:              # they replied and the chat has paused
+                break
+        question, answer = split_exchange(self._session_log[start:], self._asst_name)
+        facts = []
+        if answer:
+            try:
+                from core.text_model import get_text_model
+                resp = await asyncio.to_thread(get_text_model().generate_content, fact_prompt(question, answer))
+                facts = parse_facts(getattr(resp, "text", "") or "")
+                for f in facts:
+                    update_memory({f["category"]: {f["key"]: {"value": f["value"]}}})
+                if facts:
+                    self.ui.write_log(f"SYS: Learned {len(facts)} thing(s) from the check-in.")
+            except Exception as e:
+                print(f"[Proactive] ⚠️ learning failed: {e}")
+        try:
+            await asyncio.to_thread(record_exchange, focus, question, answer, facts)
+        except Exception as e:
+            print(f"[Proactive] ⚠️ could not record the check-in: {e}")
 
     # ── Self-training ────────────────────────────────────────────────────────────
 

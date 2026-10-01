@@ -27,6 +27,8 @@ config/whatsapp_web/
 
 # ── Personal data the assistant accumulates about you ─────────────────────────
 memory/long_term.json
+memory/human_conversations.jsonl
+memory/greetings.json
 memory/self_training.json
 memory/routing_training.json
 memory/seed_training.json

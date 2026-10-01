@@ -3542,7 +3542,7 @@ class MainWindow(QMainWindow):
         lay.addStretch()
 
         right_col = QVBoxLayout(); right_col.setSpacing(2)
-        self._clock_lbl = QLabel("00:00:00")
+        self._clock_lbl = QLabel("12:00:00 AM")
         self._clock_lbl.setFont(QFont("Courier New", 14, QFont.Weight.Bold))
         self._clock_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -3556,7 +3556,8 @@ class MainWindow(QMainWindow):
         return w
 
     def _tick_clock(self):
-        self._clock_lbl.setText(time.strftime("%H:%M:%S"))
+        # 12-hour with AM/PM: "00:10:44" at ten past midnight read as wrong
+        self._clock_lbl.setText(time.strftime("%I:%M:%S %p"))
         self._date_lbl.setText(time.strftime("%a %d %b %Y"))
 
     def _build_left_panel(self) -> QWidget:
@@ -4187,12 +4188,22 @@ class MainWindow(QMainWindow):
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                     r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
                 try:
-                    winreg.QueryValueEx(key, "JUDO_AI")
-                    return True
+                    value, _ = winreg.QueryValueEx(key, "JUDO_AI")
                 except FileNotFoundError:
                     return False
                 finally:
                     winreg.CloseKey(key)
+                # The project folder moved (e.g. OneDrive Desktop -> D:) — an entry still
+                # pointing at the old main.py fails silently at logon. Point it here.
+                script = str(Path(__file__).resolve().parent / "main.py")
+                if script.lower() not in value.lower():
+                    pythonw = Path(sys.executable).parent / "pythonw.exe"
+                    exe = str(pythonw if pythonw.exists() else sys.executable)
+                    reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                        r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+                    winreg.SetValueEx(reg, "JUDO_AI", 0, winreg.REG_SZ, f'"{exe}" "{script}"')
+                    winreg.CloseKey(reg)
+                return True
             elif _OS == "Darwin":
                 return (Path.home() / "Library" / "LaunchAgents"
                         / "com.judo.assistant.plist").exists()
