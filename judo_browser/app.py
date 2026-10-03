@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLi
                              QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QTabBar, QToolButton,
                              QVBoxLayout, QWidget, QWidgetAction)
 
-from judo_browser import about_page, account_page, accounts, dialogs, newtab, passwords, theme
+from judo_browser import about_page, account_page, accounts, context_menu, dialogs, newtab, passwords, theme
 from judo_browser.app_data import DATA, SEARCH_ENGINES, load, load_settings, save
 
 HOME_URL = "judo:newtab"
@@ -114,18 +114,27 @@ class Page(QWebEnginePage):
 
 class View(QWebEngineView):
     def contextMenuEvent(self, e):
-        menu = self.createStandardContextMenu()
-        sel = self.page().selectedText().strip()
-        if sel:
-            menu.insertAction(menu.actions()[0] if menu.actions() else None, QAction(
-                f"Search {SEARCH_ENGINES[self.window().browser.settings['search_engine']][0]} for “{sel[:30]}”",
-                menu, triggered=lambda: self.window().new_tab(to_url(sel))))
-        menu.addSeparator()
-        menu.addAction("Inspect", self.window().devtools)
-        # the menu has no Qt parent: keep it alive while it is open, or Python deletes it at once
-        # and right-click (Copy / Paste / Cut…) never shows
-        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self._menu = menu
+        win = self.window()
+        if not isinstance(win, MainWindow):
+            return super().contextMenuEvent(e)
+        b = win.browser
+        engine = SEARCH_ENGINES.get(b.settings.get("search_engine"), ("Google",))[0]
+
+        def inspect():
+            win.devtools()
+            self.page().triggerAction(QWebEnginePage.WebAction.InspectElement)
+        menu = context_menu.web_menu(
+            self,
+            open_tab=lambda u: win.new_tab(u, background=True),
+            open_window=lambda u: b.new_window(u),
+            open_incognito=lambda u: b.new_window(u, incognito=True),
+            search=(engine, lambda text: win.new_tab(to_url(text))),
+            save_page=win.save_page, print_page=win.print_page,
+            view_source=lambda: win.new_tab(QUrl("view-source:" + self.url().toString())),
+            inspect=inspect)
+        if menu is None:
+            return super().contextMenuEvent(e)
+        self._menu = menu          # parented to the view and deleted on close
         menu.popup(e.globalPos())
 
 
@@ -1412,6 +1421,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("JUDO Browser")
     app.setWindowIcon(theme.judo_icon())
     app.setStyle("Fusion")
+    context_menu.TextMenus.install(app)
     browser = Browser(app)
     browser.start(to_url(argv[1]) if len(argv) > 1 else None)
     return app.exec()

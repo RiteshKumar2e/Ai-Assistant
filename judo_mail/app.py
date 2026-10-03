@@ -21,7 +21,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut,
@@ -144,6 +144,22 @@ class MailPage(QWebEnginePage):
 
     def javaScriptConsoleMessage(self, *a):
         pass   # newsletters' own warnings (meta tags, mixed content…) are not JUDO Mail's errors
+
+
+class MailView(QWebEngineView):
+    """The mail body. Right-click gives a normal menu: Copy, Select all, links (open in JUDO
+    Browser / copy address), images (copy / copy address)."""
+
+    def contextMenuEvent(self, e):
+        from judo_browser.context_menu import web_menu
+        menu = web_menu(self, navigation=False, downloads=False,
+                        open_tab=lambda u: ThreadPoolExecutor(1).submit(_open_link, u.toString()),
+                        search=("Google", lambda text: ThreadPoolExecutor(1).submit(
+                            _open_link, "https://www.google.com/search?q=" + quote_plus(text))))
+        if menu is None:
+            return super().contextMenuEvent(e)
+        self._menu = menu
+        menu.popup(e.globalPos())
 
 
 def _open_link(url: str) -> None:
@@ -336,14 +352,22 @@ class FolderDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.t = t
         self.counts: dict[str, int] = {}
+        self.compact = False          # the collapsed menu: icons only, a dot for unread
 
     def sizeHint(self, option, index):
-        return QSize(option.rect.width(), 46 if index.data(KIND) == "header" else 40)
+        if index.data(KIND) == "header":
+            return QSize(option.rect.width(), 18 if self.compact else 46)
+        return QSize(option.rect.width(), 40)
 
     def paint(self, p: QPainter, option, index):
         t, r, name, kind = self.t, option.rect, index.data(), index.data(KIND)
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if kind == "header" and self.compact:
+            p.setPen(QColor(t["line"]))
+            p.drawLine(r.left() + 16, r.center().y(), r.right() - 16, r.center().y())
+            p.restore()
+            return
         if kind == "header":
             p.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
             p.setPen(QColor(t["text"]))
@@ -351,6 +375,21 @@ class FolderDelegate(QStyledItemDelegate):
             p.restore()
             return
         selected = option.state & QStyle.StateFlag.State_Selected
+        if self.compact:
+            ic = "label" if kind == "label" else next((i for n, i, *_ in SIDEBAR if n == name), "inbox")
+            pill = QRectF(r.center().x() - 26, r.top() + 4, 52, 32)
+            if selected or option.state & QStyle.StateFlag.State_MouseOver:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(t["select"] if selected else t["hover"]))
+                p.drawRoundedRect(pill, 16, 16)
+            look.icon(ic, t["accent"] if selected else t["sub"], 20).paint(
+                p, QRect(int(pill.center().x()) - 10, r.top() + 10, 20, 20))
+            if self.counts.get(name, 0):
+                p.setPen(QPen(QColor(t["card"]), 2))
+                p.setBrush(QColor(look.SPECTRUM[1]))
+                p.drawEllipse(QRectF(pill.center().x() + 5, r.top() + 7, 9, 9))
+            p.restore()
+            return
         if selected or option.state & QStyle.StateFlag.State_MouseOver:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(t["select"] if selected else t["hover"]))
@@ -825,6 +864,8 @@ class MailWindow(QMainWindow):
 
         # top bar: brand · search · refresh · account
         brand = QHBoxLayout()
+        brand.addWidget(_tool("menu", "Main menu", self._toggle_menu, t, 24))
+        brand.addSpacing(10)
         logo = QLabel()
         logo.setPixmap(look.app_icon().pixmap(34, 34))
         name = QLabel("<span style='color:%s'>J</span><span style='color:%s'>U</span><span style='color:%s'>D</span>"
@@ -853,10 +894,11 @@ class MailWindow(QMainWindow):
         top.addWidget(self.me)
 
         # left: compose + folders + labels
-        compose = QPushButton("  Compose", objectName="Compose")
+        self.compose_btn = compose = QPushButton("  Compose", objectName="Compose")
         compose.setIcon(look.icon("edit", "#FFFFFF", 20))
         compose.setIconSize(QSize(20, 20))
         compose.setCursor(Qt.CursorShape.PointingHandCursor)
+        compose.setToolTip("Compose (Ctrl+N)")
         compose.clicked.connect(self.compose)
         self.folders = QListWidget(objectName="Folders")
         self.folder_delegate = FolderDelegate(t, self.folders)
@@ -866,7 +908,7 @@ class MailWindow(QMainWindow):
             self._sidebar_item(n, "folder", folder, q)
         self.folders.setCurrentRow(0)
         self.folders.currentItemChanged.connect(self._folder_changed)
-        left = QWidget()
+        self.left = left = QWidget()
         left.setFixedWidth(256)
         lv = QVBoxLayout(left)
         lv.setContentsMargins(12, 8, 6, 12)
@@ -923,7 +965,8 @@ class MailWindow(QMainWindow):
         self.list.setMouseTracking(True)
         self.list.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self.list.setUniformItemSizes(True)
-        self.list.selectionModel().currentChanged.connect(lambda cur, _: self._open(cur.row()))
+        self.list.clicked.connect(lambda idx: self._open(idx.row()))
+        self.list.activated.connect(lambda idx: self._open(idx.row()))
         self.list.verticalScrollBar().valueChanged.connect(self._maybe_more)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._row_menu)
@@ -969,6 +1012,8 @@ class MailWindow(QMainWindow):
         self.actions: dict[str, QToolButton] = {}
         bar = QHBoxLayout()
         bar.setSpacing(2)
+        bar.addWidget(_tool("back", "Back to list (Esc)", self._back_to_list, t))
+        bar.addSpacing(10)
         for key, ic, tip, fn in (("reply", "reply", "Reply (Ctrl+R)", self._reply),
                                  ("reply_all", "reply_all", "Reply all", lambda: self._reply(all_=True)),
                                  ("forward", "forward", "Forward", self._forward),
@@ -982,9 +1027,16 @@ class MailWindow(QMainWindow):
             if key == "forward":
                 bar.addSpacing(10)
         bar.addStretch(1)
+        self.position = QLabel("", objectName="Position")
+        bar.addWidget(self.position)
+        bar.addSpacing(6)
+        self.newer = _tool("chevron_left", "Newer", lambda: self._step(-1), t)
+        self.older = _tool("chevron_right", "Older", lambda: self._step(1), t)
+        bar.addWidget(self.newer)
+        bar.addWidget(self.older)
         self.attach_row = QHBoxLayout()
         self.attach_row.setSpacing(8)
-        self.view = QWebEngineView()
+        self.view = MailView()
         self.view.setPage(MailPage(self.view))
         self.view.settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, False)
         self.paper = QFrame(objectName="Paper")      # mails bring their own (usually light) design
@@ -1011,24 +1063,18 @@ class MailWindow(QMainWindow):
         rv.addLayout(self.attach_row)
         rv.addWidget(self.paper, 1)
         rv.addLayout(pills)
-        self.placeholder = QLabel(objectName="Empty", alignment=Qt.AlignmentFlag.AlignCenter)
-        self.placeholder.setText(f"<div style='font-size:40pt;color:{t['line']}'>✉</div>"
-                                 "<div>Select a message to read it here</div>")
         right = QFrame(objectName="Card")
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.addWidget(self.reader, 1)
-        rl.addWidget(self.placeholder, 1)
 
-        split = QSplitter()
-        split.setHandleWidth(12)
-        split.addWidget(mid)
-        split.addWidget(right)
-        split.setSizes([580, 720])
+        self.stage = QStackedWidget()        # page 0: the list · page 1: the open mail
+        self.stage.addWidget(mid)
+        self.stage.addWidget(right)
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 14, 0)
         body.addWidget(left)
-        body.addWidget(split, 1)
+        body.addWidget(self.stage, 1)
         central = QWidget()
         cl = QVBoxLayout(central)
         cl.setContentsMargins(0, 0, 0, 6)
@@ -1039,8 +1085,10 @@ class MailWindow(QMainWindow):
         for keys, fn in (("Ctrl+N", self.compose), ("Ctrl+R", self._reply),
                          ("Delete", lambda: self._act_current("delete")), ("E", lambda: self._act_current("archive")),
                          ("F5", lambda: self.load_folder()), ("Ctrl+F", self.search.setFocus),
-                         ("/", self.search.setFocus)):
+                         ("/", self.search.setFocus), ("Esc", self._back_to_list), ("U", self._back_to_list),
+                         ("K", lambda: self._step(-1)), ("J", lambda: self._step(1))):
             QShortcut(QKeySequence(keys), self, activated=fn)
+        self._set_compact(bool(look.load_settings().get("menu_collapsed")), save=False)
         self._reader_enabled(False)
         self._update_toolbar()
         self.load_folder()
@@ -1064,6 +1112,7 @@ class MailWindow(QMainWindow):
     # ── sidebar, tabs, list ────────────────────────────────────────────────
     def _sidebar_item(self, name: str, kind: str, folder: str = "", query: str = "") -> QListWidgetItem:
         item = QListWidgetItem(name)
+        item.setToolTip(name)
         item.setData(KIND, kind)
         item.setData(TARGET, folder)
         item.setData(FIXED_QUERY, query)
@@ -1382,9 +1431,10 @@ class MailWindow(QMainWindow):
         self._status()
 
     def _reader_enabled(self, on: bool) -> None:
-        self.reader.setVisible(on)
-        self.placeholder.setVisible(not on)
-        if not on:
+        self.stage.setCurrentIndex(1 if on else 0)
+        if on:
+            self._update_position()
+        else:
             self.current, self.current_summary = None, None
             self.view.setHtml("")
 
@@ -1488,6 +1538,53 @@ class MailWindow(QMainWindow):
         if row == self.list.currentIndex().row() and self.current:
             self._star_button(on)
         self.statusBar().showMessage("Starred" if on else "Unstarred", 3000)
+
+    # ── Gmail-style navigation ─────────────────────────────────────────────
+    def _back_to_list(self) -> None:
+        if self.stage.currentIndex() == 1:
+            self._reader_enabled(False)
+            self.list.setFocus()
+
+    def _current_row(self) -> int:
+        if self.current is None:
+            return -1
+        return next((i for i, s in enumerate(self.rows) if s.uid == self.current.uid), -1)
+
+    def _step(self, delta: int) -> None:
+        """Newer (-1) / older (+1) mail while one is open."""
+        if self.stage.currentIndex() != 1:
+            return
+        row = self._current_row() + delta
+        if 0 <= row < len(self.rows):
+            self.list.setCurrentIndex(self.model.index(row, 0))
+            self._open(row)
+
+    def _update_position(self) -> None:
+        row, total = self._current_row(), (len(self.uids) or len(self.rows))
+        self.position.setText(f"{row + 1:,} of {total:,}" if row >= 0 else "")
+        self.newer.setEnabled(row > 0)
+        self.older.setEnabled(0 <= row < len(self.rows) - 1)
+
+    def _toggle_menu(self) -> None:
+        self._set_compact(not self.folder_delegate.compact)
+
+    def _set_compact(self, on: bool, save: bool = True) -> None:
+        """☰ collapses the menu to icons (unread shows as a dot) and expands it again."""
+        self.folder_delegate.compact = on
+        self.left.setFixedWidth(84 if on else 256)
+        self.compose_btn.setText("" if on else "  Compose")
+        self.compose_btn.setProperty("compact", on)
+        self.compose_btn.setFixedSize(QSize(56, 56) if on else QSize(16777215, 16777215))
+        if not on:
+            self.compose_btn.setMinimumSize(0, 0)
+        self.compose_btn.style().unpolish(self.compose_btn)
+        self.compose_btn.style().polish(self.compose_btn)
+        self.folders.doItemsLayout()
+        self.folders.viewport().update()
+        if save:
+            settings = look.load_settings()
+            settings["menu_collapsed"] = on
+            look.save_settings(settings)
 
     # ── account menu ───────────────────────────────────────────────────────
     def _account_menu(self) -> None:
@@ -1594,6 +1691,8 @@ def main() -> int:
     import traceback
     sys.excepthook = lambda *exc: traceback.print_exception(*exc)   # log it; keep the window running
     app.setStyle("Fusion")
+    from judo_browser.context_menu import TextMenus
+    TextMenus.install(app)       # select and copy text anywhere with the mouse
     app.setFont(QFont("Segoe UI", 10))
     app.setWindowIcon(look.app_icon())
     if not mbx.accounts() and not AccountDialog(first=True).exec():

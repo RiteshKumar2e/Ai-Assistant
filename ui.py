@@ -4740,6 +4740,19 @@ class JudoUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
+        try:   # select + copy text with the mouse, right-click menus that match JUDO's look
+            from judo_browser.context_menu import TextMenus
+            TextMenus.install(self._app)
+            self._app.setStyleSheet(self._app.styleSheet() + f"""
+                QMenu {{ background: {C.PANEL}; color: {C.TEXT}; border: 1px solid {C.BORDER_B};
+                         padding: 4px 0; font-family: 'Courier New'; font-size: 9pt; }}
+                QMenu::item {{ padding: 6px 28px 6px 18px; }}
+                QMenu::item:selected {{ background: {C.PRI_GHO}; color: {C.PRI}; }}
+                QMenu::item:disabled {{ color: {C.TEXT_DIM}; }}
+                QMenu::separator {{ height: 1px; background: {C.BORDER}; margin: 4px 8px; }}
+            """)
+        except Exception as e:
+            print(f"[UI] text menus unavailable: {e}")
         self._win = MainWindow(face_path)
         self.root = _RootShim(self._app)
         self._win.show()

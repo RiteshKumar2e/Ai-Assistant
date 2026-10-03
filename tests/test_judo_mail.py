@@ -162,12 +162,13 @@ def test_window_tabs_bulk_actions_and_reading_with_a_fake_mailbox():
     w._tab("promotions")
     assert ("uids", "INBOX", "category:promotions") in calls and w.title.text() == "Promotions"
 
-    w.list.setCurrentIndex(w.model.index(0, 0))          # opening an unread mail marks it read
+    w._open(0)                                          # opening an unread mail marks it read
     QCoreApplication.processEvents()
     assert w.current.uid == "1" and ("read", "1") in calls and not w.rows[0].unread
     assert w.unsub.isVisibleTo(w)                          # it has a List-Unsubscribe link
 
-    w._check_row(1)                                        # tick two rows, then act on both at once
+    w._back_to_list()
+    w._check_row(1)                                      # tick two rows, then act on both at once
     w._check_row(2)
     assert w.selected_label.text() == "2 selected" and w.bulk["archive"].isVisibleTo(w)
     w._bulk("unread")
@@ -175,7 +176,7 @@ def test_window_tabs_bulk_actions_and_reading_with_a_fake_mailbox():
     w._select_all()
     assert len(w.checked) == 3
     w._bulk("archive")
-    assert ("archive", "1,2,3") in calls and w.model.rowCount() == 0 and not w.reader.isVisibleTo(w)
+    assert ("archive", "1,2,3") in calls and w.model.rowCount() == 0 and w.stage.currentIndex() == 0
     w.close()
 
 
@@ -237,13 +238,13 @@ def test_live_sync_adds_new_mail_drops_deleted_and_picks_up_gmail_flags():
 
     w = ma.MailWindow(FakeWorker(), "me@x.com")
     assert w.watcher is None                                      # tests never open a real Gmail connection
-    w.list.setCurrentIndex(w.model.index(1, 0))                   # reading mail 2
+    w._open(1)                                                   # reading mail 2
     assert w.current.uid == "2"
     state["uids"] = ["4", "3", "2"]                               # mail 4 arrived, mail 1 deleted in Gmail…
     state["flags"] = {"3": (False, True)}                         # …and mail 3 starred on the phone
     w._sync()
     assert [s.uid for s in w.rows] == ["4", "3", "2"] and w.rows[0].unread and w.rows[1].starred
-    assert w.current.uid == "2" and w.reader.isVisibleTo(w)       # the open mail stayed open
+    assert w.current.uid == "2" and w.stage.currentIndex() == 1       # the open mail stayed open
     assert "1 new message" in w.statusBar().currentMessage()
     w.close()
 
@@ -361,4 +362,47 @@ def test_message_rows_can_be_copied(monkeypatch):
     assert app.clipboard().text() == "rahul@x.com"
     w._copy_row(0, "line")
     assert app.clipboard().text() == "Rahul Kumar <rahul@x.com>\nMeeting at 5\nSee you there"
+    w.close()
+
+
+def test_gmail_layout_full_page_mail_and_collapsible_menu(tmp_path, monkeypatch):
+    pytest.importorskip("PyQt6.QtWebEngineWidgets")
+    _app()
+    from judo_mail import app as ma, look
+    from judo_mail import mailbox as mb
+    monkeypatch.setattr(look, "SETTINGS_DIR", tmp_path)
+
+    class FakeMB:
+        def uids(self, folder, query=""): return ["3", "2", "1"]
+        def summaries(self, folder, uids):
+            return [mb.Summary(u, f"S{u}", f"Subj {u}", "", False, False) for u in uids]
+        def unseen(self, folder="INBOX"): return 0
+        def category_new(self): return {}
+        def display_name(self): return ""
+        def labels(self): return []
+        def get(self, folder, uid):
+            m = mb.Mail(uid, f"S{uid} <s{uid}@x.com>", "me@x.com", "", f"Subj {uid}", "", "<id>")
+            m.text = "hi"
+            return m
+
+    class FakeWorker:
+        def run(self, fn, cb=lambda r: None): cb(fn(FakeMB()))
+        def shutdown(self): pass
+
+    w = ma.MailWindow(FakeWorker(), "me@x.com")
+    assert w.stage.currentIndex() == 0                       # the list fills the page
+    w.list.setCurrentIndex(w.model.index(1, 0))              # moving the selection doesn't open mail
+    assert w.current is None
+    w._open(0)                                               # a click opens it full page
+    assert w.stage.currentIndex() == 1 and w.position.text() == "1 of 3"
+    assert not w.newer.isEnabled() and w.older.isEnabled()
+    w._step(1)                                               # older
+    assert w.current.uid == "2" and w.position.text() == "2 of 3"
+    w._back_to_list()
+    assert w.stage.currentIndex() == 0 and w.current is None
+    w._toggle_menu()                                         # ☰ collapses the menu to icons
+    assert w.folder_delegate.compact and w.left.width() == 84 and w.compose_btn.text() == ""
+    assert look.load_settings()["menu_collapsed"] is True
+    w._toggle_menu()
+    assert not w.folder_delegate.compact and w.compose_btn.text().strip() == "Compose"
     w.close()

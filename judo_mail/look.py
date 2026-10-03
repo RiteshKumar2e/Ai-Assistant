@@ -71,6 +71,9 @@ ICONS = {   # Material Design paths, 24×24
             "00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
     "download": "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z",
     "back": "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z",
+    "menu": "M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z",
+    "chevron_left": "M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z",
+    "chevron_right": "M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z",
     "archive": "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 "
                "6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 "
                "17.5zM5.12 5l.81-1h12l.94 1H5.12z",
@@ -233,6 +236,8 @@ def stylesheet(t: dict) -> str:
                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {SPECTRUM[0]}, stop:1 {SPECTRUM[1]}); }}
     #Compose:hover {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6A49F2, stop:1 #F23A7C); }}
     #Folders {{ background: transparent; border: none; outline: none; }}
+    #Compose[compact="true"] {{ padding: 0; border-radius: 16px; text-align: center; }}
+    #Position {{ color: {t['sub']}; font-size: 9pt; }}
     #Title {{ font-size: 15pt; font-weight: 600; }}
     #Sub, #Count {{ color: {t['sub']}; }}
     #Subject {{ font-size: 16pt; font-weight: 600; }}
