@@ -19,6 +19,7 @@ import smtplib
 from dataclasses import dataclass, field
 from email.header import decode_header, make_header
 from email.message import EmailMessage, Message
+from datetime import datetime
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 
@@ -58,6 +59,8 @@ class Summary:
     date: str
     unread: bool
     starred: bool
+    when: datetime | None = None     # the Date header, for "3:45 PM" / "12 Oct" in the list
+    address: str = ""                # the sender's (or, in Sent, recipient's) e-mail address
 
 
 @dataclass
@@ -137,12 +140,15 @@ class Mailbox:
             flags = flags.group(1) if flags else ""
             h = email.message_from_bytes(part[1])
             try:
-                date = parsedate_to_datetime(h["Date"]).strftime("%d %b %Y, %H:%M")
+                when = parsedate_to_datetime(h["Date"])
+                date = when.strftime("%d %b %Y, %H:%M")
             except Exception:
-                date = _text(h["Date"])
-            found[uid] = Summary(uid, _who(_text(h["From"])) if folder != FOLDERS["Sent"] else "To: " + _who(_text(h["To"])),
-                                 _text(h["Subject"]) or "(no subject)", date,
-                                 "\\Seen" not in flags, "\\Flagged" in flags)
+                when, date = None, _text(h["Date"])
+            sent = folder == FOLDERS["Sent"]
+            who = _text(h["To"] if sent else h["From"])
+            found[uid] = Summary(uid, ("To: " if sent else "") + _who(who), _text(h["Subject"]) or "(no subject)", date,
+                                 "\\Seen" not in flags, "\\Flagged" in flags, when,
+                                 next((a for _, a in getaddresses([who]) if a), ""))
         return [found[u] for u in uids if u in found]
 
     def get(self, folder: str, uid: str) -> Mail:
@@ -168,6 +174,12 @@ class Mailbox:
             elif part.get_content_type() == "text/plain" and not mail.text:
                 mail.text = body
         return mail
+
+    def unseen(self, folder: str = "INBOX") -> int:
+        """Unread messages in a folder — the badge next to Inbox."""
+        typ, data = self._conn(folder).status(f'"{folder}"', "(UNSEEN)")
+        found = re.search(rb"UNSEEN (\d+)", data[0] or b"") if typ == "OK" else None
+        return int(found.group(1)) if found else 0
 
     def save_attachment(self, mail: Mail, index: int, folder: Path) -> Path:
         parts = [p for p in mail.raw.walk() if not p.is_multipart()

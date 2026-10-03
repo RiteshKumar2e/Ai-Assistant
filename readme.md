@@ -149,7 +149,7 @@ A Chrome-like browser on the Chromium engine (Qt WebEngine), made for JUDO. **Ev
 python -m judo_mail
 ```
 
-A Gmail client window over IMAP/SMTP: folders, a paged message list, Gmail search syntax, reading mail (its scripts turned off, links opening in JUDO Browser), attachments, compose / reply / reply-all / forward, star, mark unread and delete. Needs `gmail_address` and `gmail_app_password` (a Google App Password, not your account password) in `config/api_keys.json`.
+A Gmail client window over IMAP/SMTP, laid out in the familiar three panes (folders · messages · the open mail) but with JUDO's own look: JUDO Spectrum colours, a violet→rose Compose button, rounded cards, coloured sender avatars, two-line rows with friendly dates ("3:45 PM", "12 Oct"), an unread count on Inbox, and light / dark mode following Windows. Gmail search syntax, reading mail (its scripts turned off, shown on a white page, links opening in JUDO Browser), attachment chips that save to Downloads, compose / reply / reply-all / forward, star, mark unread, delete, and more mail loading as you scroll. Shortcuts: Ctrl+N compose, Ctrl+R reply, Del delete, F5 refresh, / search. Needs `gmail_address` and `gmail_app_password` (a Google App Password, not your account password) in `config/api_keys.json`.
 
 ### 🧍‍♀️ A face and a body — the 3D avatar
 

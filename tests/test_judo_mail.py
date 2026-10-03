@@ -94,3 +94,67 @@ def test_missing_credentials_explain_what_to_add(monkeypatch, tmp_path):
     monkeypatch.setattr(mb, "CONFIG", cfg)
     with pytest.raises(RuntimeError, match="gmail_app_password"):
         mb.credentials()
+
+
+def test_summaries_keep_the_real_date_and_sender_address(box):
+    s = box.summaries("INBOX", ["9"])[0]
+    assert s.address == "rahul@x.com" and s.when.year == 2026 and s.when.hour == 10
+
+
+def test_unseen_count_for_the_inbox_badge(box):
+    box._imap.status = lambda folder, what: ("OK", [b'"INBOX" (UNSEEN 12)'])
+    assert box.unseen("INBOX") == 12
+    box._imap.status = lambda folder, what: ("NO", [None])
+    assert box.unseen("INBOX") == 0
+
+
+def test_list_dates_avatars_and_initials():
+    from datetime import datetime, timedelta
+    from judo_mail import look
+    now = datetime(2026, 10, 3, 18, 0)
+    assert look.when_text(now.replace(hour=9, minute=5), now=now) == "9:05 AM"          # today: a time
+    assert look.when_text(now - timedelta(days=3), now=now) == "30 Sep"                 # this year: day month
+    assert look.when_text(datetime(2025, 9, 23), now=now) == "23/09/25"                 # older: full date
+    assert look.when_text(None, "raw date") == "raw date"
+    assert look.avatar_color("Aman@x.com") == look.avatar_color("aman@x.com")           # same sender, same colour
+    assert look.initial("To: priya") == "P" and look.initial("  ") == "?"
+
+
+def test_window_lists_opens_stars_and_deletes_with_a_fake_mailbox():
+    pytest.importorskip("PyQt6.QtWebEngineWidgets")
+    from datetime import datetime, timezone
+    from PyQt6.QtCore import QCoreApplication
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(["x", "-platform", "offscreen"])
+    from judo_mail import app as ma
+    rows = [mb.Summary(str(i), f"Sender {i}", f"Subject {i}", "", i == 1, False,
+                       datetime(2026, 10, 3, 9, i, tzinfo=timezone.utc), f"s{i}@x.com") for i in (1, 2, 3)]
+    calls = []
+
+    class FakeMB:
+        def uids(self, folder, query=""): return [r.uid for r in rows]
+        def summaries(self, folder, uids): return [r for r in rows if r.uid in uids]
+        def unseen(self, folder="INBOX"): return 1
+        def get(self, folder, uid):
+            m = mb.Mail(uid, f"Sender {uid} <s{uid}@x.com>", "me@x.com", "", f"Subject {uid}", "", "<id>")
+            m.text = "hello"
+            return m
+        def mark_read(self, folder, uid, read=True): calls.append(("read", uid, read))
+        def star(self, folder, uid, on=True): calls.append(("star", uid, on))
+        def trash(self, folder, uid): calls.append(("trash", uid))
+
+    class FakeWorker:                                    # runs synchronously: no threads in the test
+        def run(self, fn, cb=lambda r: None): cb(fn(FakeMB()))
+        def shutdown(self): pass
+
+    w = ma.MailWindow(FakeWorker(), "me@x.com")
+    assert w.model.rowCount() == 3 and w.folder_delegate.counts["Inbox"] == 1 and w.count.text() == "1–3 of 3"
+    w.list.setCurrentIndex(w.model.index(0, 0))          # opening an unread mail marks it read
+    QCoreApplication.processEvents()
+    assert w.current.uid == "1" and ("read", "1", True) in calls and not w.rows[0].unread
+    assert w.folder_delegate.counts["Inbox"] == 0 and w.reader.isVisibleTo(w)
+    w._star_row(1)
+    assert ("star", "2", True) in calls and w.rows[1].starred
+    w._delete()
+    assert ("trash", "1") in calls and w.model.rowCount() == 2 and w.count.text() == "1–2 of 2"
+    w.close()
