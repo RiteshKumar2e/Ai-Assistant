@@ -7,7 +7,8 @@ def _gemini_search(query: str) -> str:
 
 _DDG_TIMEOUT = 8  # seconds — without this, a slow backend (Yahoo, Bing, ...) can hang the whole call far longer than any caller actually waits for
 
-def _ddg_search(query: str, max_results: int = 6) -> list[dict]:
+def _ddg_search(query: str, max_results: int = 6, timelimit: str | None = None) -> list[dict]:
+    """`timelimit`: None, or 'd' / 'w' / 'm' / 'y' — only pages from the last day/week/month/year."""
     try:
         from ddgs import DDGS
     except ImportError:
@@ -15,7 +16,8 @@ def _ddg_search(query: str, max_results: int = 6) -> list[dict]:
 
     results = []
     with DDGS(timeout=_DDG_TIMEOUT) as ddgs:
-        for r in ddgs.text(query, max_results=max_results):
+        kw = {"timelimit": timelimit} if timelimit else {}
+        for r in ddgs.text(query, max_results=max_results, **kw):
             results.append({
                 "title":   r.get("title",  ""),
                 "snippet": r.get("body",   ""),

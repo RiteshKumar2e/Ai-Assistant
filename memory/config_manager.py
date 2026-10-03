@@ -96,6 +96,18 @@ def get_user_name() -> str:
     return load_api_keys().get("user_name", "")
 
 
+def get_user_id() -> str:
+    """A stable, random id for the person using this JUDO install. Per-user data
+    (resumes, job applications…) is filed under it, so renaming yourself in
+    Settings never mixes up or loses that data. Created on first use."""
+    uid = (load_api_keys().get("user_id", "") or "").strip()
+    if not uid:
+        import uuid
+        uid = uuid.uuid4().hex
+        _patch_config(user_id=uid)
+    return uid
+
+
 def get_user_gender() -> str:
     """Manual honorific override: 'male' -> Sir, 'female' -> Mam, '' -> auto-detect
     from voice pitch. Only used as the ADDRESS fallback when no name is known."""

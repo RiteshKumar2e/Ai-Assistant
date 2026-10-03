@@ -81,6 +81,16 @@ class Page(QWebEnginePage):
         if hasattr(self, "permissionRequested"):          # Qt >= 6.8
             self.permissionRequested.connect(self._permission)
 
+    # A file JUDO was asked to attach (a resume on a job application). It is handed to the
+    # page's file picker exactly once, for the next picker this page opens, then forgotten.
+    armed_files: list[str] | None = None
+
+    def chooseFiles(self, mode, old, accepted):
+        files, self.armed_files = self.armed_files, None
+        if files:
+            return files
+        return super().chooseFiles(mode, old, accepted)
+
     def createWindow(self, kind):
         bg = kind == QWebEnginePage.WebWindowType.WebBrowserBackgroundTab
         return self.win.new_tab(background=bg, blank=True).page()   # the engine loads the target itself

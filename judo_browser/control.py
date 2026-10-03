@@ -327,3 +327,170 @@ class Commands:
     def do_screenshot(self, w, v, p, done):
         path = p.get("path") or str(Path.home() / "Desktop" / f"judo_browser_{time.strftime('%Y%m%d_%H%M%S')}.png")
         done(f"Screenshot saved: {path}" if v.grab().save(path) else "Could not save the screenshot.")
+
+    # ── job applications (jobs/apply.py) ─────────────────────────────────────
+    # Structured answers (dicts) so the agent decides from what the page really shows.
+
+    def do_page_state(self, w, v, p, done):
+        script = r"""(() => {
+          const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+          const text = (document.body ? document.body.innerText : '').slice(0, 12000);
+          const frames = [...document.querySelectorAll('iframe')].map(f => f.src || '').join(' ');
+          const captcha = /recaptcha|hcaptcha|turnstile|arkoselabs|funcaptcha|captcha/i.test(frames)
+            || !!document.querySelector('.g-recaptcha,.h-captcha,[data-sitekey],#captcha,.cf-turnstile')
+            || /verify (that )?you are (a )?human|i'm not a robot|complete the captcha/i.test(text);
+          const pw = [...document.querySelectorAll('input[type=password]')].filter(vis).length;
+          const fields = [...document.querySelectorAll('input:not([type=hidden]),select,textarea')].filter(
+            e => vis(e) || e.type === 'file').length;
+          const buttons = [...document.querySelectorAll('button,input[type=submit],[role=button],a.button,a[class*=apply]')]
+            .filter(vis).map(b => (b.innerText || b.value || b.getAttribute('aria-label') || '').trim()).filter(Boolean).slice(0, 40);
+          return {url: location.href, title: document.title, text, captcha, password_fields: pw, fields, buttons};
+        })()"""
+        self._js(v, script, done, lambda r: r or {"error": "page did not answer"})
+
+    def do_read_form(self, w, v, p, done):
+        script = r"""(() => {
+          const vis = e => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+          const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+          const labelOf = e => {
+            let t = '';
+            if (e.labels && e.labels.length) t = [...e.labels].map(l => l.innerText).join(' ');
+            if (!t && e.getAttribute('aria-labelledby')) t = e.getAttribute('aria-labelledby').split(' ')
+              .map(id => (document.getElementById(id) || {}).innerText || '').join(' ');
+            if (!t) t = e.getAttribute('aria-label') || '';
+            if (!t) { const fs = e.closest('fieldset'); if (fs && fs.querySelector('legend')) t = fs.querySelector('legend').innerText; }
+            if (!t) { let n = e.parentElement; for (let i = 0; n && i < 3 && !t; i++, n = n.parentElement) {
+                const l = n.querySelector('label,legend,.label,[class*=label],[class*=question]'); if (l && !l.contains(e)) t = l.innerText; } }
+            if (!t) t = e.getAttribute('placeholder') || e.name || e.id || '';
+            return clean(t).slice(0, 300);
+          };
+          let n = 0; const out = []; const groups = {};
+          for (const e of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]),select,textarea')) {
+            const type = e.tagName === 'SELECT' ? 'select' : e.tagName === 'TEXTAREA' ? 'textarea' : (e.type || 'text');
+            if (type !== 'file' && !vis(e)) continue;
+            if (!e.dataset.judoId) e.dataset.judoId = 'f' + (++n) + '_' + Math.random().toString(36).slice(2, 6);
+            const sel = '[data-judo-id="' + e.dataset.judoId + '"]';
+            const label = labelOf(e);
+            const required = e.required || e.getAttribute('aria-required') === 'true' || /\*/.test(label);
+            const grouped = type === 'radio' || (type === 'checkbox' && e.name &&
+                            document.querySelectorAll('input[name="' + CSS.escape(e.name) + '"]').length > 1);
+            if (grouped) {
+              const key = e.name || sel;
+              const optLabel = clean((e.labels && e.labels[0] && e.labels[0].innerText) || e.value);
+              if (!groups[key]) {
+                let q = ''; const fs = e.closest('fieldset');
+                if (fs && fs.querySelector('legend')) q = fs.querySelector('legend').innerText;
+                for (let p = e.parentElement, i = 0; p && i < 4 && !q; i++, p = p.parentElement) {
+                  const l = p.querySelector('legend,.label,[class*=label],[class*=question],label:not([for])');
+                  if (l && !l.contains(e) && clean(l.innerText) !== optLabel) q = l.innerText; }
+                groups[key] = {selector: 'input[name="' + CSS.escape(e.name) + '"]', type, label: clean(q || e.name).slice(0, 300),
+                               required, options: [], value: ''};
+                out.push(groups[key]);
+              }
+              groups[key].options.push(optLabel);
+              if (e.checked) groups[key].value = optLabel;
+              if (required) groups[key].required = true;
+              continue;
+            }
+            const f = {selector: sel, type, label, name: e.name || '', required,
+                       value: type === 'file' ? (e.files.length ? e.files[0].name : '')
+                            : (type === 'checkbox' ? (e.checked ? 'yes' : '') : (e.value || '')),
+                       accept: e.getAttribute('accept') || '', autocomplete: e.getAttribute('autocomplete') || ''};
+            if (type === 'select') f.options = [...e.options].map(o => clean(o.text)).filter(Boolean);
+            out.push(f);
+          }
+          return out;
+        })()"""
+        self._js(v, script, done, lambda r: r if isinstance(r, list) else [])
+
+    def do_set_field(self, w, v, p, done):
+        sel, value = str(p.get("selector", "")), str(p.get("value", ""))
+        script = r"""(() => {
+          const sel = %s, value = %s;
+          const els = [...document.querySelectorAll(sel)]; if (!els.length) return 'missing';
+          const e = els[0]; const norm = s => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+          const fire = x => { x.dispatchEvent(new Event('input', {bubbles: true}));
+                              x.dispatchEvent(new Event('change', {bubbles: true}));
+                              x.dispatchEvent(new Event('blur', {bubbles: true})); };
+          const optText = r => norm((r.labels && r.labels[0] && r.labels[0].innerText) || r.value);
+          if (e.type === 'radio' || (e.type === 'checkbox' && els.length > 1)) {
+            const want = norm(value);
+            const hit = els.find(r => optText(r) === want) || els.find(r => optText(r).startsWith(want));
+            if (!hit) return 'no-option'; hit.click(); return hit.checked ? 'ok' : 'unchanged';
+          }
+          if (e.type === 'checkbox') { const on = /^(yes|true|1|on|checked)$/i.test(value); if (e.checked !== on) e.click(); return 'ok'; }
+          e.scrollIntoView({block: 'center'}); e.focus();
+          if (e.tagName === 'SELECT') {
+            const want = norm(value);
+            const o = [...e.options].find(o => norm(o.text) === want || norm(o.value) === want)
+                   || [...e.options].find(o => norm(o.text).startsWith(want));
+            if (!o) return 'no-option'; e.value = o.value; fire(e); return 'ok';
+          }
+          const proto = e.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(proto, 'value').set.call(e, value); fire(e);
+          return e.value === value ? 'ok' : 'unchanged';
+        })()""" % (json.dumps(sel), json.dumps(value))
+        self._js(v, script, done, lambda r: r or "error")
+
+    def do_upload_file(self, w, v, p, done):
+        """Attach a file to a file input. Chromium opens a file picker only after a real
+        click, so the page's picker is armed with exactly this one file (Page.chooseFiles)
+        and the input — or the button that opens it — gets a genuine mouse click."""
+        path, sel = str(p.get("path", "")), str(p.get("selector", ""))
+        if not Path(path).is_file():
+            return done("missing-file")
+        locate = r"""(() => {
+          const e = document.querySelector(%s); if (!e) return null;
+          const vis = x => { const r = x.getBoundingClientRect(); const s = getComputedStyle(x);
+            return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
+          let t = vis(e) ? e : ((e.id && document.querySelector('label[for="' + CSS.escape(e.id) + '"]')) || null);
+          if (!t || !vis(t)) { t = null; for (let n = e.parentElement, i = 0; n && i < 4 && !t; i++, n = n.parentElement) {
+              t = [...n.querySelectorAll('button,[role=button],label,a')].find(vis) || null; } }
+          if (!t) { e.style.cssText += ';display:block!important;opacity:1!important;width:200px;height:30px;position:relative;';
+                    t = e; }
+          t.scrollIntoView({block: 'center'}); const r = t.getBoundingClientRect();
+          return [r.left + r.width / 2, r.top + r.height / 2];
+        })()""" % json.dumps(sel)
+        check = ("(() => { const e = document.querySelector(%s); "
+                 "return e && e.files && e.files.length ? e.files[0].name : ''; })()" % json.dumps(sel))
+
+        def click(pt):
+            if not pt:
+                return done("missing")
+            from PyQt6.QtCore import QPointF
+            from PyQt6.QtGui import QMouseEvent
+            v.page().armed_files = [path]
+            z, target = v.zoomFactor(), (v.focusProxy() or v)
+            pos = QPointF(pt[0] * z, pt[1] * z)
+            for kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+                buttons = Qt.MouseButton.LeftButton if kind == QEvent.Type.MouseButtonPress else Qt.MouseButton.NoButton
+                QApplication.sendEvent(target, QMouseEvent(kind, pos, target.mapToGlobal(pos), Qt.MouseButton.LeftButton,
+                                                           buttons, Qt.KeyboardModifier.NoModifier))
+
+            def verify(r):
+                v.page().armed_files = None              # never left armed for a later picker
+                done(f"attached:{r}" if r else "not-attached")
+            QTimer.singleShot(1500, lambda: self._js(v, check, verify))
+        QTimer.singleShot(300, lambda: self._js(v, locate, click))
+
+    def do_submit_form(self, w, v, p, done):
+        """Press the form's submit button. jobs/apply.py only sends this from inside the
+        on-screen confirmation's callback."""
+        sel = str(p.get("selector") or "")
+        script = r"""(() => {
+          const vis = x => { const r = x.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+          let e = %s ? document.querySelector(%s) : null;
+          if (!e) e = [...document.querySelectorAll('button,input[type=submit],[role=button]')].filter(vis)
+            .find(x => /submit|send application|apply now|^apply$|finish|complete application/i.test((x.innerText || x.value || '').trim()));
+          if (!e) return null; e.scrollIntoView({block: 'center'}); e.click();
+          return (e.innerText || e.value || 'submit').trim().slice(0, 60);
+        })()""" % (json.dumps(sel), json.dumps(sel))
+
+        def pressed(r):
+            if not r:
+                return done({"clicked": False})
+            QTimer.singleShot(int(p.get("wait_ms", 5000)),
+                              lambda: self.do_page_state(w, v, {}, lambda st: done({"clicked": r, "after": st})))
+        self._js(v, script, pressed)

@@ -24,6 +24,7 @@ from agent.agents.files import FileAgent
 from agent.agents.general import GeneralAgent
 from agent.agents.git import GitAgent
 from agent.agents.github import GitHubAgent
+from agent.agents.jobs import JobAgent
 from agent.agents.messaging import MessagingAgent
 from agent.agents.research import ResearchAgent
 from agent.agents.supervisor import SupervisorAgent
@@ -37,7 +38,7 @@ from agent.orchestration.permissions import ConfirmationBroker
 from agent.orchestration.state import TaskContext
 
 AGENTS = (GeneralAgent, BrowserAgent, ComputerAgent, CodingAgent, TestingAgent, GitAgent, GitHubAgent, ResearchAgent,
-          FileAgent, MessagingAgent, EmailAgent, CalendarAgent, DeploymentAgent)
+          FileAgent, MessagingAgent, EmailAgent, CalendarAgent, DeploymentAgent, JobAgent)
 
 
 class AgentService:

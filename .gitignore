@@ -80,3 +80,7 @@ voice_training/*.ipynb
 voice_training/*.zip
 voice_demo/
 judo.mp3
+
+# personal resumes used for local testing — never commit
+tests/fixtures/resume_sample.txt
+tests/fixtures/resume_generic.txt
