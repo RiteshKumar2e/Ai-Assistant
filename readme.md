@@ -21,6 +21,8 @@ Built on the Gemini Live API for native audio streaming, delivering zero subscri
 
 It's also built to grow: every skill — bundled or drop-in — now **describes itself in its own file**, so adding a tool is a one-file operation and the core stays lean.
 
+The newest additions make JUDO feel less like a tool and more like someone there with you: it has **a face and a body** — a 3D anime character who breathes, blinks, lip-syncs to its voice and gestures while it talks — it **starts conversations on its own** (good morning, how did the interview go?) and **learns from your answers**, and it ships **its own browser, JUDO Browser**, so every website it opens for you lives in one place it fully controls.
+
 It's not just an assistant — it's an extension of your digital life.
 
 ---
@@ -51,8 +53,6 @@ It's not just an assistant — it's an extension of your digital life.
 | 👁️ Visual Awareness | Real-time screen capture and webcam vision piped into your main Gemini session |
 | 🧠 Persistent Memory | Deeply remembers projects, preferences, and personal context across sessions |
 | ⌨️ Hybrid Input | Seamlessly switch between keyboard typing and voice commands |
-| 🌅 Morning Briefing | On first boot: greets you, reads the time, recaps yesterday, and fetches live news |
-| 🔔 Proactive 2.0 | Time-aware, context-aware check-ins — knows the time of day, your projects, and what you've been discussing |
 | 🗓️ Session Memory | Summarises each conversation and mentions it naturally next morning — consumed after use, never repeats |
 | 👁️‍🗨️ Background Monitoring | User-configured topic watching — checks for new headlines once a day and alerts naturally |
 | 📊 Hardware Monitoring | Continuous CPU, RAM, GPU and temperature telemetry with localized voice alerts |
@@ -64,20 +64,25 @@ It's not just an assistant — it's an extension of your digital life.
 | 🎮 Game Updater | Checks and triggers game updates on Steam and Epic Games on demand |
 | 📂 File Processor | Read, summarize, and answer questions about local files |
 | 💻 Code Helper | Inline code review, debugging, and generation |
-| 🌐 Browser Control | Drives your actual, already-open Chrome/Edge/Brave/Vivaldi/Opera (real profile, real logins) via CDP — opens URLs, clicks, types and reads pages by voice, never a second separate browser window |
+| 🌐 JUDO Browser | JUDO's own Chrome-like browser (Chromium engine) — every site, search and link JUDO opens goes here, never Chrome or Edge. Tabs, smart address bar, bookmarks, history, downloads, encrypted passwords, incognito, DevTools, sandboxed pages |
+| 🎨 Customize JUDO | Google-style New Tab page with an animated 3D JUDO logo, search suggestions, editable shortcuts, light / dark / device mode, colour themes that tint the whole browser, and backgrounds (or your own photo) |
+| 👤 JUDO Accounts | Several people or profiles in one browser — each with its own logins, cookies and passwords — plus a "Manage your JUDO Account" page (personal info, data & privacy, security, accounts) |
+| 🌐 Browser Control | Drives JUDO Browser by voice — opens URLs, searches, clicks, types, presses keys and reads pages; "Chrome kholo" / "open in Edge" also mean JUDO Browser |
+| 📬 JUDO Mail | A Gmail client window over IMAP/SMTP — folders, search, read, attachments, compose / reply / forward; links open in JUDO Browser |
 | 📨 Send Message | Compose and send messages through WhatsApp, Telegram, and more |
 | 🎬 YouTube Control | Search, play, and control YouTube playback by voice |
 | 🖱️ Desktop Control | Taskbar, window management, and desktop-level operations |
 | 🧑‍💻 Silent Language Memory | Detects spoken language on first use — all future sessions adapt automatically |
 | 📱 Remote Dashboard | Control the assistant from your phone via QR code pairing — the phone's mic streams live into the same session running on your computer, so a command spoken on the phone executes on the computer |
-| ⚡ Auto-Start on Boot | Registers with the OS startup system (registry / LaunchAgent / .desktop) |
+| ⚡ Auto-Start on Boot | Registers with the OS startup system (registry / LaunchAgent / .desktop) — and repairs the entry itself if the project folder moves |
+| 🔒 One JUDO at a time | Starting JUDO while it is already running shows a message instead of a second copy fighting over the mic and the dashboard port |
 | 📋 Clipboard Intelligence | Copy any text → floating panel with Translate / Summarise / Explain / Fix |
 | 🪪 Assistant Customization | Change the assistant name, your name, voice, and colour from the UI — takes effect immediately |
 | 🎛️ Media Control | Play/pause, skip, previous and stop for whatever is currently playing — Spotify, YouTube, or any player |
 | 🔁 Unit Converter | Converts length, weight, temperature and currency (live exchange rate) on request |
 | 📅 Calendar / Agenda | Local event calendar — add, list today's/tomorrow's/this week's agenda, remove — no external account needed |
 | 🧠 Quiz Mode | Voice-driven quiz on any topic — generates questions locally, checks spoken answers, keeps score |
-| 📧 Email (Gmail) | Sends email through the user's own, already-open browser and real, already-logged-in Google account — no password ever stored |
+| 📧 Email (Gmail) | Sends email through JUDO Browser and your real, already-logged-in Google account — no password ever stored |
 | 🔑 Multi-Key Failover | Configure more than one Gemini API key — on a quota/rate-limit hit, JUDO rotates to the next one automatically instead of going down |
 | 🗣️ Gender-Aware Grammar | Self-reference and address use grammatically correct gender agreement (languages that require it), matched to your and JUDO's configured gender |
 
@@ -107,6 +112,102 @@ Cloud, Gmail/Outlook, Google Calendar, Vercel/Render, MCP servers) are configure
 
 ---
 
+## 🌟 Latest Additions
+
+Everything below is built on top of RITESH LIII.
+
+### 🌐 JUDO Browser — JUDO's own browser
+
+```
+python -m judo_browser              # or just say "YouTube kholo" / "browser kholo"
+python -m judo_browser github.com   # open a site (hands it to the running browser if one is open)
+```
+
+A Chrome-like browser on the Chromium engine (Qt WebEngine), made for JUDO. **Every website, search and link JUDO opens goes here — it never opens Chrome or Edge**, even when you say "open in Chrome". If JUDO Browser can't do something, JUDO says so instead of silently switching browsers. (To go back to driving Edge, set `"default_browser": "edge"` in `config/api_keys.json`.)
+
+**Voice control.** JUDO drives it over a private local connection: go to a site (switching to an already-open tab instead of opening a duplicate), search, open tabs, click, type, fill forms, press keys, scroll, read the page, take screenshots. It starts by itself when closed. JUDO Mail, WhatsApp, YouTube and weather links open here too.
+
+**Everyday browser features.** Tabs (pin, mute, duplicate, reopen closed), address bar with search suggestions, bookmarks and bookmarks bar, history, downloads, find in page, per-site zoom, print, save page, view source, DevTools, site permissions, session restore, incognito windows, Chrome keyboard shortcuts. Saved passwords are encrypted with Windows DPAPI — only your Windows account on this PC can read them.
+
+**New Tab page.** Laid out like Google's home page, with JUDO's own identity:
+- the **JUDO logo in 3D** — letters drop in one by one, float, catch a light sheen, lean toward your mouse, and spin when clicked — in JUDO's own palette, **JUDO Spectrum** (violet `#7B5CFF` · rose `#FF4D8D` · amber `#FFA62B` · aqua `#12C9B4`), also used for the app icon
+- a search box with live suggestions (from your history and Google, Hindi included)
+- **shortcuts** with real site icons — add, edit or remove them (right-click or ⋮), with Undo; up to 10
+- an apps launcher, and links to history, downloads, bookmarks and settings
+
+**Customize JUDO** (button on the New Tab page, or ⋮ → Customize JUDO): **Light / Dark / Device** mode (Device follows Windows live), 12 colour themes plus a custom colour that tint the tabs, toolbar and frame, 12 backgrounds or a photo from your PC, and shortcut options. Light / Dark / Device is also in ⋮ → Appearance and in Settings.
+
+**JUDO Accounts.** Click the avatar on the New Tab page for a Google-style account menu: switch accounts, **Add another account**, **Remove an account**, **Sign out of all accounts**, and **Manage your JUDO Account**. Each account is a separate browser profile with its **own logins, cookies, cache and saved passwords** (history, bookmarks and settings are shared), opening in its own window. The account page (`judo://account`) has Home, Personal info (name, email, colour, picture), Data & privacy (history, clear browsing data, download your data as JSON), Security (sandbox status, password manager, sign-out) and Accounts. JUDO Accounts live only on this PC.
+
+**About JUDO Browser** (`judo://about`): version, *Made by Ritesh*, what JUDO is, features and copyable technical details.
+
+**Security.** Pages run in the **Chromium sandbox**. When Python is installed inside the user profile, Windows doesn't let the sandboxed page process read Qt's files and every page would stay blank; the browser grants that folder read access once at start-up (what Chrome's own installer does) and only falls back to no sandbox if it can't. JUDO's own pages (New Tab, Account, About) talk to the browser with a per-run secret token, so no website can trigger their actions.
+
+### 📬 JUDO Mail
+
+```
+python -m judo_mail
+```
+
+A Gmail client window over IMAP/SMTP: folders, a paged message list, Gmail search syntax, reading mail (its scripts turned off, links opening in JUDO Browser), attachments, compose / reply / reply-all / forward, star, mark unread and delete. Needs `gmail_address` and `gmail_app_password` (a Google App Password, not your account password) in `config/api_keys.json`.
+
+### 🧍‍♀️ A face and a body — the 3D avatar
+
+Put a **`.vrm`** model in **`avatar/models/`** and JUDO shows that character, **full body**, in the middle of its window. Every motion is procedural, so no animation files are needed and any VRM works:
+
+| JUDO is… | The character… |
+|---|---|
+| starting | waves hello |
+| listening | breathes, shifts weight from foot to foot, smiles, looks around — and at your mouse pointer |
+| speaking | lip-syncs to the real loudness of JUDO's voice (aa / ih / ou / ee / oh), nods, gestures with an open hand |
+| thinking | rests a hand on the chin, tilts the head, looks up |
+| sleeping | head down, eyes closed |
+
+Hair and clothes swing with spring-bone physics, and the eyes blink at random. **Getting a model:** download one from [VRoid Hub](https://hub.vroid.com) whose terms allow avatar use, or make your own in the free VRoid Studio and export it as VRM. The newest file in the folder is used. `avatar/models/README.md` has the steps. `.vrm` files are git-ignored because each has its own licence. pixiv's official sample model works too: its VRM licence allows avatar use by everyone, commercial use and redistribution, with no credit required.
+
+The viewer (`avatar/viewer.html` + `viewer.js`, three.js + three-vrm, both MIT) is served to a transparent web view on a private local port, with the libraries kept in `avatar/vendor/`, **so it works offline**. With no model, the HUD shows an animated **2D anime face** (`anime_face.py`) that blinks, lip-syncs and changes expression by state.
+
+### 💬 A JUDO that talks first — and learns from it
+
+- **Startup hello.** JUDO opens with the right greeting for the time of day and **one question**: how you are, what's on today, or how last time's thing went. Today's headlines appear on screen quietly instead of being read over your answer.
+- **Four greetings a day.** **Good morning** (from 5 am), **Good afternoon** (12), **Good evening** (5 pm) and **Good night** (9 pm). Each comes once, as soon as that part of the day begins and you aren't mid-sentence, and is remembered across restarts (`memory/greetings.json`).
+- **Check-ins every 10 minutes, 24 hours a day.** After 10 quiet minutes it says something, and again every 10 minutes the quiet lasts. Each check-in is at most two short sentences in your language, ends with one question, and rotates between how you are, your work, a follow-up on something earlier, getting to know you, and something interesting. Late at night it asks about rest instead of work.
+- **Learning.** Once your answer settles, the facts it reveals (plans, likes, people, habits) are saved to long-term memory, so the next question builds on them. Every exchange (question, answer, answered or not, what was learned) is appended to **`memory/human_conversations.jsonl`**, JUDO's own conversation training data. Its last questions are fed back in so it doesn't repeat itself. Both files are git-ignored.
+
+### 🗣️ JUDO's own voice — `voice_training/`
+
+Notebooks that turn one reference recording into a voice model JUDO can run on a plain CPU, offline:
+
+1. **IndicF5** speaks 1,932 Hindi sentences in the reference voice → `judo_voice_dataset.zip`
+2. **Piper** is fine-tuned on that dataset → `judo_voice_model.zip` (`judo_voice.onnx` + `.json`)
+
+- **Google Colab (2 cells):** upload `judo_voice_colab_all.zip`, then run `run_all.sh`. Step-by-step guide: `voice_training/colab_commands.md`.
+- **Kaggle:** use the two notebooks.
+
+Rebuild all of them with `python voice_training/build_notebooks.py`. Needs a Hugging Face token (`HF_TOKEN`) and access to the gated IndicF5 model.
+
+### 🌱 Seed generator — 1,00,000 real-sounding commands
+
+`core/seed_generator.py` grows the routing exam beyond the 20,000 template commands. One model family writes new commands for a tool in a given speaking style (speech-recognition typos, rambling, indirect needs, Hinglish, Devanagari…), and a model from the other family must route each one blind to the same tool and details before it is kept (`memory/seed_tasks.jsonl`).
+
+```
+python -m core.seed_generator --status     # progress, thinnest labels
+python -m core.seed_generator              # run (resumable); run_seed_generator.ps1 starts it at logon
+```
+
+It needs internet. Without it, it waits instead of stalling and carries on when the connection returns. Every Gemini call now has a 120-second limit, so one unanswered request can no longer freeze it.
+
+### 🩹 Reliability
+
+- **One JUDO at a time.** A second launch shows a message instead of two copies sharing the mic.
+- **Dashboard port busy.** If port 8000 is taken, only the phone dashboard is turned off; the voice session keeps running.
+- **Auto-start repairs itself.** If the registry entry points to an old folder, it is rewritten to the current one (it used to fail silently at logon).
+- **No more hung text-model calls** (120-second limit).
+- **Taskbar.** JUDO Browser shows its own icon instead of Python's.
+- **HUD clock.** Now in 12-hour time (`12:10:44 AM`).
+
+---
+
 ## 🆕 What's New in RITESH LIII
 
 RITESH LIII is about making JUDO **hands-free, faster, and easy to extend** — all universal: no hardcoded language, no bundled asset files, works the same on Windows, macOS and Linux.
@@ -133,6 +234,8 @@ Languages with grammatical gender (e.g. self-referring verb/adjective agreement)
 
 ### 🌐 Real-browser automation
 `browser_control` used to open simple "go to this site" requests in the real, already-open browser but fall back to a second, separate, signed-out automation profile the moment an interactive action (click/type) was needed — so a flow like "open ChatGPT and ask it X" could end up typing into a browser window that was never logged in anywhere. It now drives the user's actual already-open Chrome/Edge/Brave/Vivaldi/Opera via the Chrome DevTools Protocol for every action, including plain navigation — one browser, real profile, no second window. JUDO **never closes, kills or restarts your browser**: websites open as new tabs in the window you already have open. Clicking, typing and reading inside a page work when the browser was started with remote debugging; otherwise JUDO says so instead of restarting it (Chrome 136+ also ignores the debug flag on your normal profile, so a restart could never have worked there anyway).
+
+> **Since then:** JUDO now uses **its own browser** — see [JUDO Browser](#-judo-browser--judos-own-browser). The CDP path above is only used when `"default_browser": "edge"` is set.
 
 > Built on the RITESH LI/LII foundation: the **🧩 Plugin System**, **♾️ Unlimited Sessions**, **🎨 Live Theming**, **〰️ Reactive HUD** and **🎙️ Voice Picker** are all still here.
 
@@ -274,8 +377,17 @@ Each release is named **RITESH \<roman numeral\>** — the version column below 
 git clone https://github.com/RiteshKumar2e/Ai-Assistant.git
 cd Ai-Assistant
 python setup.py        # installs deps for YOUR OS + the browser automation engine
-python main.py
+python main.py         # JUDO itself (only one copy runs at a time)
 ```
+
+```bash
+python -m judo_browser                       # JUDO Browser on its own
+python -m judo_mail                          # JUDO Mail (Gmail)
+python -m core.seed_generator --status       # seed-generator progress
+pytest tests/                                # the test suite
+```
+
+Want the 3D character? Drop a `.vrm` model into `avatar/models/` (see *A face and a body — the 3D avatar* above) and restart JUDO.
 
 `setup.py` only ever installs what your operating system needs — the Windows-only libraries are skipped automatically on macOS and Linux (and vice-versa). Prefer to do it by hand? `pip install -r requirements.txt` works too.
 
@@ -291,7 +403,9 @@ python main.py
 | **Python** | 3.11 or 3.12 |
 | **Microphone** | Required for voice interaction (and for the "Hey Judo" wake word) |
 | **Speakers** | Required for voice replies |
+| **Qt WebEngine** | `PyQt6-WebEngine` (in `requirements.txt`) — JUDO Browser, JUDO Mail and the 3D avatar run on it |
 | **API Key** | Free Gemini API key (entered on first launch → `config/api_keys.json`; more than one can be configured for automatic failover) |
+| **3D avatar** *(optional)* | Any `.vrm` model in `avatar/models/` — runs on integrated graphics; very high-poly models may slow the HUD |
 | **Wake word** *(optional)* | One-click download from ⚙ → WAKE WORD (`openwakeword`, a few MB, fully local) — see the note in [What's New](#-whats-new-in-ritesh-liii) about the "Hey Judo" model |
 
 ---
@@ -300,8 +414,27 @@ python main.py
 
 ```
 Ai-Assistant/
-├── main.py                   # Core loop — Gemini Live session, audio I/O, wake/sleep state, tool dispatch
+├── main.py                   # Core loop — Gemini Live session, audio I/O, wake/sleep, greetings & check-ins, tool dispatch
 ├── ui.py                     # PyQt6 HUD — reactive waveform, log panel, settings drawer, plugin manager, camera feed
+├── anime_face.py             # Animated 2D anime face for the HUD (shown when no 3D model is installed)
+├── avatar_view.py            # The 3D character inside the HUD — transparent web view fed JUDO's state and voice level
+├── avatar/
+│   ├── viewer.html / viewer.js  # three.js + three-vrm viewer — procedural breathing, blinking, lip-sync, gestures
+│   ├── vendor/               # three.js, GLTFLoader, three-vrm (MIT) — bundled so the avatar works offline
+│   └── models/               # Put your .vrm here (git-ignored); README.md explains where to get one
+├── judo_browser/
+│   ├── app.py                # JUDO Browser — windows, tabs, omnibox, bookmarks, downloads, accounts, sandbox
+│   ├── newtab.py             # New Tab page — 3D JUDO logo, search, shortcuts, apps, Customize JUDO panel
+│   ├── account_page.py       # "Manage your JUDO Account" (judo://account)
+│   ├── about_page.py         # About JUDO Browser (judo://about)
+│   ├── accounts.py           # JUDO Accounts — one browser profile and password store per account
+│   ├── control.py / client.py # Local voice-control channel between JUDO and the browser
+│   ├── theme.py              # Light/dark/device themes, colour tints, JUDO Spectrum palette and app icon
+│   ├── passwords.py          # Saved passwords, DPAPI-encrypted, filled per exact site
+│   ├── omnibox.py / dialogs.py / app_data.py  # Address bar, settings/history/downloads dialogs, settings storage
+├── judo_mail/                # JUDO Mail — Gmail over IMAP/SMTP (mailbox.py) in a PyQt window (app.py)
+├── voice_training/           # Notebooks + Colab bundle that train JUDO's own Piper voice from one recording
+├── run_seed_generator.ps1    # Starts the seed generator in the background (used at logon)
 ├── setup.py                  # OS-aware installer (skips wrong-OS dependencies)
 ├── plugins/
 │   ├── _template.py          # Copy this to write a new plugin — one file, drop in, done
@@ -315,14 +448,14 @@ Ai-Assistant/
 │   ├── web_search.py         # Gemini + DDG parallel search (news, research, price, compare)
 │   ├── screen_processor.py   # Screen & webcam capture for vision
 │   ├── background_monitor.py # User-configured topic watching — daily DDG check, no crypto
-│   ├── proactive.py          # Proactive 2.0 — time/context/rotation-aware check-ins
+│   ├── proactive.py          # Proactive 3.0 — day-part greetings, 10-minute check-ins, learning from answers
 │   ├── reminder.py           # OS-native scheduled notifications
 │   ├── system_monitor.py     # CPU / RAM / GPU / temperature telemetry
 │   ├── computer_settings.py  # Volume, brightness, WiFi, power (per-OS) — owns system volume/mute
 │   ├── computer_control.py   # Keyboard shortcuts, mouse, window management
 │   ├── open_app.py           # Application launcher (per-OS name map)
 │   ├── open_folder.py        # Folder navigation and shortcuts
-│   ├── browser_control.py    # Real-browser (CDP) web automation — one window, the user's own
+│   ├── browser_control.py    # Voice control of JUDO Browser (CDP path to Edge/Chrome only if configured)
 │   ├── file_controller.py    # File system operations
 │   ├── file_processor.py     # Document reading and summarization
 │   ├── send_message.py       # Messaging integration
@@ -339,10 +472,15 @@ Ai-Assistant/
 ├── memory/
 │   ├── memory_manager.py     # Load/save long_term.json — sessions, monitors, identity
 │   ├── config_manager.py     # api_keys.json access — key(s), OS, name, voice, gender, colour, toggles
-│   └── long_term.json        # Persistent store: identity, preferences, projects, sessions, monitors
+│   ├── long_term.json        # Persistent store: identity, preferences, projects, sessions, monitors
+│   ├── human_conversations.jsonl # Every check-in: question, answer, facts learned — conversation training data
+│   ├── greetings.json        # Which part of the day JUDO last greeted
+│   └── seed_tasks.jsonl      # Seed-generator commands (routing exam)
 ├── core/
 │   ├── prompt.txt            # Assistant personality and tool-routing rules
 │   ├── llm_client.py         # Gemini Live session client
+│   ├── text_model.py         # Text-model chain (Groq → Gemini/Gemma), multi-key failover, 120 s call limit
+│   ├── seed_generator.py     # Writes + cross-checks 1,00,000 real-sounding commands for the routing exam
 │   ├── stt.py / tts.py       # Speech-to-text / text-to-speech pipelines
 │   ├── undo.py               # One shared undo stack — actions register how to reverse themselves
 │   ├── confirm.py            # Irreversible-action gate — the token is issued by the UI, not the model

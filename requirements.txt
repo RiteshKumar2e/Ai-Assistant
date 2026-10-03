@@ -1,5 +1,6 @@
 # ── Core: UI, audio, Gemini Live ──────────────────────────────────────────────
 PyQt6
+PyQt6-WebEngine          # JUDO Browser, JUDO Mail and the 3D avatar (Chromium engine)
 sounddevice
 numpy
 google-genai>=2.8.0
