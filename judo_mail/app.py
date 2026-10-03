@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -36,7 +37,7 @@ from judo_mail import mailbox as mbx
 from judo_mail.mailbox import FOLDERS, Mail, Mailbox, Summary
 
 PAGE = 50
-REFRESH_MS = 120_000
+SYNC_MS = 60_000            # fallback sync; the Inbox also updates the moment Gmail pushes a change
 SUMMARY = Qt.ItemDataRole.UserRole + 1
 KIND, TARGET, FIXED_QUERY = Qt.ItemDataRole.UserRole + 2, Qt.ItemDataRole.UserRole + 3, Qt.ItemDataRole.UserRole + 4
 # sidebar: (name, icon, IMAP folder, fixed search) — Purchases is an Inbox category, like in Gmail
@@ -48,6 +49,8 @@ SIDEBAR = [("Inbox", "inbox", FOLDERS["Inbox"], ""), ("Starred", "star_border", 
 TABS = [("primary", "Primary", "inbox"), ("promotions", "Promotions", "tag"), ("social", "Social", "people"),
         ("updates", "Updates", "info")]
 _windows: list = []          # open windows (a theme or account change opens a fresh one)
+_retired: list = []          # closed ones, kept referenced until Qt has deleted them itself — letting Python
+                             # destroy a window whose mail view is still busy crashes Qt WebEngine
 
 
 class Worker(QObject):
@@ -75,6 +78,36 @@ class Worker(QObject):
         if self._mb:
             self._pool.submit(self._mb.close)
         self._pool.shutdown(wait=False)
+
+
+class IdleWatcher(QObject):
+    """Live sync with Gmail: a second connection sits in IMAP IDLE on the Inbox and
+    `changed` fires the moment Gmail reports new mail, a deletion, or a flag change
+    (read / starred elsewhere). Reconnects by itself after a network drop."""
+    changed = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self._stop = threading.Event()
+        threading.Thread(target=self._loop, name="judo-mail-idle", daemon=True).start()
+
+    def _loop(self) -> None:
+        mb = None
+        while not self._stop.is_set():
+            try:
+                mb = mb or Mailbox()
+                if mb.wait_for_change(FOLDERS["Inbox"], 240) and not self._stop.is_set():
+                    self.changed.emit()
+            except Exception:
+                if mb:
+                    mb.close()
+                mb = None
+                self._stop.wait(20)          # offline or logged out: try again shortly
+        if mb:
+            mb.close()
+
+    def stop(self) -> None:
+        self._stop.set()
 
 
 class _Relay(QObject):
@@ -733,8 +766,12 @@ class MailWindow(QMainWindow):
         self._update_toolbar()
         self.load_folder()
         self.worker.run(lambda mb: mb.labels(), self._got_labels)
-        timer = QTimer(self, interval=REFRESH_MS)
-        timer.timeout.connect(self._auto_refresh)
+        # live sync: Gmail pushes changes through IDLE; a slower timer covers other folders and dropped pushes
+        self.watcher = IdleWatcher() if isinstance(self.worker, Worker) else None
+        if self.watcher:
+            self.watcher.changed.connect(self._sync)
+        timer = QTimer(self, interval=SYNC_MS)
+        timer.timeout.connect(self._sync)
         timer.start()
 
     # ── sidebar, tabs, list ────────────────────────────────────────────────
@@ -871,11 +908,58 @@ class MailWindow(QMainWindow):
         self.statusBar().showMessage(f"{name}: {n:,} conversations" if not self.query else f"{n:,} results", 4000)
         self.setWindowTitle(f"{name} — JUDO Mail")
 
-    def _auto_refresh(self) -> None:
-        # only at the top of the inbox list with nothing checked, so nothing jumps under the user
-        if (self.folder == FOLDERS["Inbox"] and not self.query and not self.checked
-                and self.list.currentIndex().row() <= 0):
-            self.load_folder()
+    def _sync(self) -> None:
+        """Bring the open list in line with Gmail without reloading it: new mail is added
+        at the top, mail deleted or moved elsewhere disappears, and read / starred changes
+        made in Gmail (web, phone) show up. The open message and the scroll position stay."""
+        if self._loading:
+            return
+        folder, query, loaded = self.folder, self._effective_query(), [s.uid for s in self.rows]
+
+        def work(mb):
+            uids = mb.uids(folder, query)
+            have = set(loaded)
+            fresh = [u for u in uids[:PAGE] if u not in have]
+            still = set(uids)
+            return (folder, query, uids, mb.summaries(folder, fresh) if fresh else [],
+                    mb.flags(folder, [u for u in loaded if u in still]))
+        self.worker.run(work, self._synced)
+
+    def _synced(self, result) -> None:
+        if isinstance(result, Exception):
+            return                                   # a missed sync is retried by the next one
+        folder, query, uids, fresh, flags = result
+        if (folder, query) != (self.folder, self._effective_query()):
+            return
+        still = set(uids)
+        for row in reversed(range(len(self.rows))):          # gone from Gmail (deleted, archived elsewhere)
+            uid = self.rows[row].uid
+            if uid not in still:
+                self.model.removeRow(row)
+                self.rows.pop(row)
+                self.checked.discard(uid)
+                if self.current and self.current.uid == uid:
+                    self._reader_enabled(False)
+        for row, s in enumerate(self.rows):                  # read / starred in Gmail itself
+            if s.uid in flags and (s.unread, s.starred) != flags[s.uid]:
+                s.unread, s.starred = flags[s.uid]
+                self._refresh_row(row)
+        order = {u: i for i, u in enumerate(uids)}
+        for s in sorted(fresh, key=lambda x: order.get(x.uid, 0)):   # new mail, in Gmail's order
+            pos = next((i for i, r in enumerate(self.rows) if order.get(r.uid, 0) > order.get(s.uid, 0)), len(self.rows))
+            item = QStandardItem()
+            item.setData(s, SUMMARY)
+            item.setEditable(False)
+            self.model.insertRow(pos, item)
+            self.rows.insert(pos, s)
+        self.uids = uids
+        self._update_toolbar()
+        self._status()
+        self._refresh_counts()
+        if fresh:
+            n = sum(1 for s in fresh if s.unread)
+            if n:
+                self.statusBar().showMessage(f"{n} new message{'s' if n != 1 else ''}", 6000)
 
     def _refresh_row(self, row: int) -> None:
         self.list.update(self.model.index(row, 0))
@@ -1198,10 +1282,15 @@ class MailWindow(QMainWindow):
         return False
 
     def closeEvent(self, e) -> None:
+        if self.watcher:
+            self.watcher.stop()
         if not self._keep_worker:
             self.worker.shutdown()
         if self in _windows:
             _windows.remove(self)
+        self.view.stop()
+        _retired.append(self)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         super().closeEvent(e)
 
 
@@ -1209,6 +1298,9 @@ def main() -> int:
     if sys.platform == "win32":
         import ctypes   # its own taskbar identity and icon instead of Python's
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Ritesh.JUDO.Mail")
+    # web views in more than one window (a theme or account change opens a new one) need shared
+    # GL contexts — without this the second window's mail view crashes
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName("JUDO Mail")
     app.setStyle("Fusion")

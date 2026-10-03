@@ -125,7 +125,7 @@ def test_window_tabs_bulk_actions_and_reading_with_a_fake_mailbox():
     from datetime import datetime, timezone
     from PyQt6.QtCore import QCoreApplication
     from PyQt6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication(["x", "-platform", "offscreen"])
+    app = _app()
     from judo_mail import app as ma
     rows = [mb.Summary(str(i), f"Sender {i}", f"Subject {i}", "", i == 1, False,
                        datetime(2026, 10, 3, 9, i, tzinfo=timezone.utc), f"s{i}@x.com", f"preview {i}", i == 2,
@@ -202,3 +202,60 @@ def test_previews_from_partial_bodies():
     assert mb.snippet('multipart/alternative; boundary="B"', "", multi).startswith("Your order & invoice")
     assert mb.unsubscribe_target("<mailto:u@x.com?subject=bye>, <https://x.com/u>") == "https://x.com/u"
     assert mb.unsubscribe_target("<mailto:u@x.com>") == "mailto:u@x.com"
+
+
+def test_live_sync_adds_new_mail_drops_deleted_and_picks_up_gmail_flags():
+    pytest.importorskip("PyQt6.QtWebEngineWidgets")
+    from datetime import datetime, timezone
+    from PyQt6.QtWidgets import QApplication
+    app = _app()
+    from judo_mail import app as ma
+    S = lambda i, unread=False: mb.Summary(str(i), f"S{i}", f"Subj {i}", "", unread, False,
+                                           datetime(2026, 10, 3, 9, i, tzinfo=timezone.utc), f"s{i}@x.com")
+    state = {"uids": ["3", "2", "1"], "flags": {}}
+    rows = {i: S(i) for i in (1, 2, 3, 4)}
+    rows[4].unread = True
+
+    class FakeMB:
+        def uids(self, folder, query=""): return list(state["uids"])
+        def summaries(self, folder, uids): return [rows[int(u)] for u in uids]
+        def flags(self, folder, uids): return {u: state["flags"].get(u, (False, False)) for u in uids}
+        def unseen(self, folder="INBOX"): return 1
+        def category_new(self): return {}
+        def labels(self): return []
+        def get(self, folder, uid):
+            m = mb.Mail(uid, f"S{uid} <s{uid}@x.com>", "me@x.com", "", f"Subj {uid}", "", "<id>")
+            m.text = "hi"
+            return m
+        def mark_read(self, *a): pass
+
+    class FakeWorker:
+        def run(self, fn, cb=lambda r: None): cb(fn(FakeMB()))
+        def shutdown(self): pass
+
+    w = ma.MailWindow(FakeWorker(), "me@x.com")
+    assert w.watcher is None                                      # tests never open a real Gmail connection
+    w.list.setCurrentIndex(w.model.index(1, 0))                   # reading mail 2
+    assert w.current.uid == "2"
+    state["uids"] = ["4", "3", "2"]                               # mail 4 arrived, mail 1 deleted in Gmail…
+    state["flags"] = {"3": (False, True)}                         # …and mail 3 starred on the phone
+    w._sync()
+    assert [s.uid for s in w.rows] == ["4", "3", "2"] and w.rows[0].unread and w.rows[1].starred
+    assert w.current.uid == "2" and w.reader.isVisibleTo(w)       # the open mail stayed open
+    assert "1 new message" in w.statusBar().currentMessage()
+    w.close()
+
+
+def _app():
+    """One QApplication for every window test, made the way JUDO Mail makes its own
+    (shared GL contexts), so several windows with mail views can live in one process."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication
+    global _APP                      # kept for the whole run: Qt WebEngine can't start twice in a process
+    if QApplication.instance() is None:
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+        _APP = QApplication(["x", "-platform", "offscreen"])
+    return QApplication.instance()
+
+
+_APP = None

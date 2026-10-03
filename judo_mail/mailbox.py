@@ -359,6 +359,75 @@ class Mailbox:
             out[c] = len(data[0].split()) if typ == "OK" and data and data[0] else 0
         return out
 
+    def flags(self, folder: str, uids: list[str]) -> dict[str, tuple[bool, bool]]:
+        """uid -> (unread, starred) right now — to catch changes made in Gmail itself."""
+        if not uids:
+            return {}
+        typ, data = self._conn(folder).uid("FETCH", ",".join(uids), "(UID FLAGS)")
+        out = {}
+        for part in data or []:
+            text = (part[0] if isinstance(part, tuple) else part or b"").decode(errors="replace")
+            u, f = re.search(r"UID (\d+)", text), re.search(r"FLAGS \(([^)]*)\)", text)
+            if u and f:
+                out[u.group(1)] = ("\\Seen" not in f.group(1), "\\Flagged" in f.group(1))
+        return out
+
+    def wait_for_change(self, folder: str = "INBOX", seconds: int = 300) -> bool:
+        """IMAP IDLE: block until Gmail reports something new or changed in `folder`
+        (True), or `seconds` pass quietly (False). Use a Mailbox of its own for this."""
+        import select
+        m = self._conn(folder)
+        tag = m._new_tag()
+        m.send(tag + b" IDLE\r\n")
+        if not m.readline().startswith(b"+"):
+            raise RuntimeError("Gmail refused IDLE")
+        changed = False
+        try:
+            # wait on the socket itself — a read timeout would break imaplib's file object for good
+            ready = m.sock.pending() > 0 or bool(select.select([m.sock], [], [], seconds)[0])
+            if ready:
+                line = m.readline()
+                changed = line.startswith(b"*") and any(w in line for w in (b"EXISTS", b"EXPUNGE", b"FETCH"))
+        finally:
+            m.send(b"DONE\r\n")
+            while True:   # drain until IDLE's own reply, so the connection is clean for the next command
+                line = m.readline()
+                if not line or line.startswith(tag):
+                    break
+        return changed
+
+    def find_contacts(self, name: str, limit: int = 5) -> list[tuple[str, str, int]]:
+        """People in this Gmail matching a spoken name -> [(display name, address, how often)],
+        best first. People the user has written to count double."""
+        words = [w for w in re.split(r"\s+", name.lower().strip()) if w]
+        if not words:
+            return []
+        q = " ".join(re.sub(r'["\\]', "", w) for w in words)
+        m = self._conn(FOLDERS["All Mail"])
+        typ, data = m.uid("SEARCH", "CHARSET", "UTF-8", "X-GM-RAW", f'"from:({q}) OR to:({q})"')
+        uids = (data[0].split() if typ == "OK" and data and data[0] else [])[-60:]
+        if not uids:
+            return []
+        typ, data = m.uid("FETCH", b",".join(uids).decode(), "(BODY.PEEK[HEADER.FIELDS (FROM TO CC)])")
+        seen: dict[str, list] = {}
+        me = self.user.lower()
+        for part in data or []:
+            if not isinstance(part, tuple):
+                continue
+            h = email.message_from_bytes(part[1])
+            from_me = me in _text(h["From"]).lower()
+            for field_name in ("From", "To", "Cc"):
+                for disp, addr in getaddresses([_text(h[field_name])]):
+                    a = addr.lower()
+                    hay = f"{disp} {a}".lower()
+                    if not a or a == me or not all(w in hay for w in words):
+                        continue
+                    entry = seen.setdefault(a, [disp or addr, a, 0])
+                    entry[0] = disp or entry[0]
+                    entry[2] += 2 if (from_me and field_name != "From") else 1
+        ranked = sorted(seen.values(), key=lambda e: -e[2])
+        return [tuple(e) for e in ranked[:limit]]
+
     def unseen(self, folder: str = "INBOX") -> int:
         """Unread messages in a folder — the badge next to Inbox."""
         typ, data = self._conn(folder).status(f'"{folder}"', "(UNSEEN)")
