@@ -66,6 +66,23 @@ def test_open_app_chrome_brings_up_judo_browser(monkeypatch):
     assert [a for a, _ in sent] == ["focus"] * 3
 
 
+def test_open_app_mail_aliases_launch_judo_mail(monkeypatch):
+    import actions.open_app as oa
+
+    launched = []
+    monkeypatch.setattr(oa, "_launch_judo_mail", lambda: launched.append(True) or True)
+    for name in ("mail", "Gmail", "email", "inbox", "JUDO Mail", "judo_mail", "gmail.com", "my mailbox"):
+        assert oa.open_app({"app_name": name}) == "JUDO Mail opened."
+    assert len(launched) == 8
+
+
+def test_open_app_mail_reports_launch_failure(monkeypatch):
+    import actions.open_app as oa
+
+    monkeypatch.setattr(oa, "_launch_judo_mail", lambda: False)
+    assert oa.open_app({"app_name": "Gmail"}) == "Could not open JUDO Mail."
+
+
 def test_open_in_browser_uses_judo_browser(monkeypatch):
     sent = _fake_client(monkeypatch, "Opened")
     monkeypatch.setattr(bc, "_open_in_running", lambda *a: pytest.fail("Edge path must not run"))

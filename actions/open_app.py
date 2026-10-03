@@ -2,6 +2,8 @@ import time
 import subprocess
 import platform
 import shutil
+import sys
+from pathlib import Path
 
 try:
     import psutil
@@ -13,6 +15,8 @@ _SYSTEM = platform.system()
 
 _BROWSER_NAMES = {"browser", "web browser", "internet", "judo browser", "chrome", "google chrome",
                   "edge", "microsoft edge", "msedge", "safari", "firefox", "brave", "opera", "vivaldi"}
+_MAIL_NAMES = {"mail", "email", "e-mail", "gmail", "gmail.com", "google mail", "inbox",
+               "mailbox", "judo mail", "judo_mail"}
 
 _APP_ALIASES: dict[str, dict[str, str]] = {
 
@@ -117,6 +121,21 @@ def _launch_windows(app_name: str) -> bool:
         print(f"[open_app] Start Menu search failed: {e}")
 
     return False
+
+
+def _launch_judo_mail() -> bool:
+    """Start JUDO Mail with the same Python environment as the running assistant."""
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "judo_mail"],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except OSError as e:
+        print(f"[open_app] JUDO Mail launch failed: {e}")
+        return False
 
 
 def _launch_macos(app_name: str) -> bool:
@@ -258,9 +277,18 @@ def open_app(
         from actions.open_folder import open_folder
         return open_folder({"folder_path": "desktop", "open_in": "claude"}, player)
 
+    normalized_name = app_name.lower().strip().replace("_", " ")
+
+    if normalized_name in _MAIL_NAMES or any(
+        term in normalized_name for term in ("mail", "email", "gmail", "inbox")
+    ):
+        if _launch_judo_mail():
+            return "JUDO Mail opened."
+        return "Could not open JUDO Mail."
+
     # JUDO Browser is the only browser JUDO opens: "Chrome kholo" / "open Edge"
     # bring up JUDO Browser instead of launching Chrome or Edge.
-    if app_name.lower() in _BROWSER_NAMES:
+    if normalized_name in _BROWSER_NAMES:
         from actions.browser_control import _judo_browser, _judo_browser_default
         if _judo_browser_default():
             return _judo_browser("focus", {})
@@ -293,13 +321,13 @@ def open_app(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
-    "description": "Opens/launches an installed desktop application or program (Spotify, WhatsApp, Notepad, Calculator, VS Code, Word, Excel, Settings). Browsers (Chrome, Edge, 'browser kholo') open JUDO Browser instead — JUDO never launches Chrome or Edge. Use for 'Spotify kholo', 'open calculator', 'notepad chalu karo'. NOT for websites or URLs (youtube.com, chatgpt, gmail, any site) — those are browser_control go_to. NOT for a folder (open_folder). Always call this tool — never just say you opened it.",
+    "description": "Opens/launches an installed desktop application or program (Spotify, WhatsApp, Notepad, Calculator, VS Code, Word, Excel, Settings). Any mail-related app name such as 'mail', 'email', 'Gmail', 'gmail.com', 'inbox', 'mailbox' or 'JUDO Mail' opens JUDO Mail, JUDO's own Gmail client. Browsers (Chrome, Edge, 'browser kholo') open JUDO Browser instead — JUDO never launches Chrome or Edge. Use for 'Spotify kholo', 'open calculator', 'notepad chalu karo', or 'mail kholo'. NOT for arbitrary websites or URLs. NOT for a folder (open_folder). Always call this tool — never just say you opened it.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "app_name": {
                 "type": "STRING",
-                "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
+                "description": "Application name; any mail-related name opens JUDO Mail"
             }
         },
         "required": [
