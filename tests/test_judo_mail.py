@@ -422,3 +422,58 @@ def test_list_times_are_local_and_rows_are_one_line():
     now = datetime(2026, 10, 3, 12, 0, tzinfo=ist)
     pdt = timezone(timedelta(hours=-7))                                          # sent from California at 8:18 PM ...
     assert look.when_text(datetime(2026, 10, 2, 20, 18, tzinfo=pdt), now=now) == "8:48 AM"   # ... is 8:48 AM in India
+
+
+def test_switching_folders_and_mails_is_instant_and_never_stuck(tmp_path, monkeypatch):
+    pytest.importorskip("PyQt6.QtWebEngineWidgets")
+    _app()
+    from judo_mail import app as ma, look
+    from judo_mail import mailbox as mb
+    monkeypatch.setattr(look, "SETTINGS_DIR", tmp_path)
+    got = []
+
+    class FakeMB:
+        def uids(self, folder, query=""): return ["3", "2", "1"] if folder == "INBOX" else ["9"]
+        def summaries(self, folder, uids):
+            return [mb.Summary(u, f"S{u}", f"Subj {u}", "", False, False) for u in uids]
+        def unseen(self, folder="INBOX"): return 0
+        def category_new(self): return {}
+        def display_name(self): return ""
+        def labels(self): return []
+        def flags(self, folder, uids): return {}
+        def get(self, folder, uid):
+            got.append(uid)
+            m = mb.Mail(uid, f"S{uid} <s{uid}@x.com>", "me@x.com", "", f"Subj {uid}", "", "<id>")
+            m.text = "hi"
+            return m
+
+    class SlowWorker:                      # Gmail answers only when the test says so
+        jobs = []
+        def run(self, fn, cb=lambda r: None): self.jobs.append((fn, cb))
+        def drain(self):
+            while self.jobs:
+                fn, cb = self.jobs.pop(0)
+                cb(fn(FakeMB()))
+        def shutdown(self): pass
+
+    worker = SlowWorker()
+    w = ma.MailWindow(worker, "me@x.com")
+    worker.drain()
+    assert len(w.rows) == 3
+    w._open(0)                                               # the page turns before Gmail answers
+    assert w.stage.currentIndex() == 1 and w.subject.text() == "Subj 3"
+    w.folders.setCurrentRow(1)                               # Starred, while mail 3 is still loading
+    assert w.stage.currentIndex() == 0                       # back on a list at once
+    worker.drain()
+    assert w.stage.currentIndex() == 0 and w.current is None   # the late mail didn't pull us back
+    assert [s.uid for s in w.rows] == ["9"]
+    w.folders.setCurrentRow(0)                               # Inbox again: shown from cache instantly
+    assert [s.uid for s in w.rows] == ["3", "2", "1"]
+    worker.drain()
+    w._open(0)
+    worker.drain()                                           # opens 3, then prefetches 2
+    assert w.current.uid == "3" and ("INBOX", "2") in w._mails
+    got.clear()
+    w._step(1)                                               # older: already fetched, no wait
+    assert w.current.uid == "2" and "2" not in got
+    w.close()

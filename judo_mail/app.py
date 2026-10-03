@@ -871,6 +871,12 @@ class MailWindow(QMainWindow):
         self._keep_worker = False
         self._closed = False
         self._popup: AccountPopup | None = None
+        # reading gets its own Gmail connection, so opening a big mail never holds up a folder
+        # switch (and the other way round); real windows only — tests pass a fake worker
+        self.reader_worker = Worker() if isinstance(self.worker, Worker) else self.worker
+        self._lists: dict[tuple, tuple[list, list]] = {}    # (folder, query) → (uids, first rows): instant switch
+        self._mails: dict[tuple, Mail] = {}                 # (folder, uid) → opened / prefetched mail
+        self._opening: str | None = None                    # the mail the user asked for last
         self._popup_closed = 0.0
         self.folder, self.fixed_query, self.tab, self.query = FOLDERS["Inbox"], "", "primary", ""
         self.uids: list[str] = []
@@ -932,6 +938,7 @@ class MailWindow(QMainWindow):
             self._sidebar_item(n, "folder", folder, q)
         self.folders.setCurrentRow(0)
         self.folders.currentItemChanged.connect(self._folder_changed)
+        self.folders.itemClicked.connect(lambda item: self._back_to_list())
         self.left = left = QWidget()
         left.setFixedWidth(256)
         lv = QVBoxLayout(left)
@@ -1163,6 +1170,7 @@ class MailWindow(QMainWindow):
     def _folder_changed(self, item, _prev=None) -> None:
         if item is None or item.data(KIND) == "header":
             return
+        self._back_to_list()
         self.folder, self.fixed_query, self.query = item.data(TARGET), item.data(FIXED_QUERY) or "", ""
         self.tab = "primary"
         self.search.clear()
@@ -1172,10 +1180,12 @@ class MailWindow(QMainWindow):
         return self.folder == FOLDERS["Inbox"] and not self.fixed_query and not self.query
 
     def _tab(self, key: str) -> None:
+        self._back_to_list()
         self.tab = key
         self.load_folder()
 
     def _search(self) -> None:
+        self._back_to_list()
         self.query = self.search.text().strip()
         self.load_folder()
 
@@ -1198,8 +1208,34 @@ class MailWindow(QMainWindow):
             b.setIcon(look.icon(icons[key], self.t["accent" if key == self.tab else "sub"], 18))
             b.style().unpolish(b)
             b.style().polish(b)
+        cached = self._lists.get((folder, query))
+        if cached and (self.uids, self.rows) != cached:
+            self._fill(*cached)
+        elif not cached:
+            self.model.clear()
+            self.uids, self.rows = [], []
+            self.title.setText(self._view_name())
+            self.count.setText("")
+            self.list.setVisible(True)
+            self.list_empty.hide()
         self._run(lambda mb: (mb.uids(folder, query), folder, query), self._got_uids)
         self._refresh_counts()
+
+    def _fill(self, uids: list, rows: list) -> None:
+        self.uids, self.rows = list(uids), []
+        self.checked.clear()
+        self.model.clear()
+        self._add_rows(rows)
+        self._update_toolbar()
+        self._status()
+
+    def _add_rows(self, rows: list) -> None:
+        for s in rows:
+            item = QStandardItem()
+            item.setData(s, SUMMARY)
+            item.setEditable(False)
+            self.model.appendRow(item)
+            self.rows.append(s)
 
     def _refresh_counts(self) -> None:
         self._run(lambda mb: mb.unseen(FOLDERS["Inbox"]), self._got_unseen)
@@ -1224,10 +1260,14 @@ class MailWindow(QMainWindow):
         uids, folder, query = result
         if (folder, query) != (self.folder, self._effective_query()):
             return   # the user moved on while this was loading
+        if uids == self.uids and self.rows:
+            self._sync()            # same mail as the cached list: just pick up read / star changes
+            return
+        if self.current and self.current.uid not in uids:
+            self._reader_enabled(False)
         self.uids, self.rows = uids, []
         self.checked.clear()
         self.model.clear()
-        self._reader_enabled(False)
         self._update_toolbar()
         self._load_more()
 
@@ -1238,7 +1278,8 @@ class MailWindow(QMainWindow):
             self._status()
             return
         self._loading = True
-        self._run(lambda mb: (mb.summaries(folder, chunk), folder), self._got_rows)
+        query = self._effective_query()
+        self._run(lambda mb: (mb.summaries(folder, chunk), folder, query), self._got_rows)
 
     def _maybe_more(self, value: int) -> None:
         """Load the next page as the list nears its end — no "Load more" button."""
@@ -1250,15 +1291,11 @@ class MailWindow(QMainWindow):
         self._loading = False
         if self._failed(result):
             return
-        rows, folder = result
-        if folder != self.folder:
+        rows, folder, query = result
+        if (folder, query) != (self.folder, self._effective_query()):
             return
-        for s in rows:
-            item = QStandardItem()
-            item.setData(s, SUMMARY)
-            item.setEditable(False)
-            self.model.appendRow(item)
-            self.rows.append(s)
+        self._add_rows(rows)
+        self._lists[(folder, query)] = (list(self.uids), list(self.rows[:PAGE]))
         self._update_toolbar()
         self._status()
 
@@ -1395,19 +1432,59 @@ class MailWindow(QMainWindow):
         if not 0 <= row < len(self.rows):
             return
         s, folder = self.rows[row], self.folder
-        self.statusBar().showMessage("Opening…")
+        self._opening = s.uid
+        cached = self._mails.get((folder, s.uid))
+        if cached:
+            unread = s.unread                       # _show marks the row read on screen
+            self._show((cached, row))
+            if unread:
+                self.reader_worker.run(lambda mb: mb.mark_read(folder, s.uid))
+            return
+        # turn the page now with what the list already knows; the body follows
+        self.subject.setText(html.escape(s.subject))
+        self.sender_avatar.set(s.sender, s.address)
+        self.sender.setText(html.escape(s.sender))
+        self.recipients.setText("")
+        self.when.setText(look.when_text(s.when, s.date))
+        self.unsub.setVisible(bool(s.unsubscribe))
+        while self.attach_row.count():
+            w = self.attach_row.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        self.view.setHtml(f"<p style='font:14px Segoe UI;color:{self.t['sub']};margin:16px'>Loading…</p>")
+        self.current, self.current_summary = None, s
+        self.stage.setCurrentIndex(1)
+        self._update_position(row)
 
         def fetch(mb):
             mail = mb.get(folder, s.uid)
             if s.unread:
                 mb.mark_read(folder, s.uid)
             return mail, row
-        self._run(fetch, self._show)
+        self.reader_worker.run(fetch, lambda r: None if self._closed else self._show(r, folder))
 
-    def _show(self, result) -> None:
+    def _remember(self, folder: str, mail: Mail) -> None:
+        self._mails[(folder, mail.uid)] = mail
+        while len(self._mails) > 60:
+            self._mails.pop(next(iter(self._mails)))
+
+    def _prefetch(self, row: int) -> None:
+        """Fetch the next mail in the background, so J / › opens it instantly."""
+        if not 0 <= row < len(self.rows):
+            return
+        folder, uid = self.folder, self.rows[row].uid
+        if (folder, uid) in self._mails:
+            return
+        self.reader_worker.run(lambda mb: mb.get(folder, uid),
+                               lambda m: None if self._closed or isinstance(m, Exception) else self._remember(folder, m))
+
+    def _show(self, result, folder: str | None = None) -> None:
         if self._failed(result):
             return
         mail, row = result
+        self._remember(folder or self.folder, mail)
+        if mail.uid != self._opening or (folder and folder != self.folder):
+            return      # the user went back or opened another mail meanwhile
         s = self.rows[row] if row < len(self.rows) and self.rows[row].uid == mail.uid else None
         if s and s.unread:
             if self.folder == FOLDERS["Inbox"]:
@@ -1453,6 +1530,7 @@ class MailWindow(QMainWindow):
             self._star_button(s.starred)
         self._reader_enabled(True)
         self._status()
+        self._prefetch(row + 1)
 
     def _reader_enabled(self, on: bool) -> None:
         self.stage.setCurrentIndex(1 if on else 0)
@@ -1469,8 +1547,9 @@ class MailWindow(QMainWindow):
             folder = downloads()
         except Exception:
             folder = Path.home() / "Downloads"
-        self._run(lambda mb: mb.save_attachment(mail, index, folder),
-                        lambda r: self._failed(r) or self.statusBar().showMessage(f"Saved {r}", 8000))
+        self.reader_worker.run(lambda mb: mb.save_attachment(mail, index, folder),
+                               lambda r: self._closed or self._failed(r) or
+                               self.statusBar().showMessage(f"Saved {r}", 8000))
 
     def _unsubscribe(self) -> None:
         s = self.current_summary
@@ -1565,14 +1644,16 @@ class MailWindow(QMainWindow):
 
     # ── Gmail-style navigation ─────────────────────────────────────────────
     def _back_to_list(self) -> None:
+        self._opening = None
         if self.stage.currentIndex() == 1:
             self._reader_enabled(False)
             self.list.setFocus()
 
     def _current_row(self) -> int:
-        if self.current is None:
+        uid = self.current.uid if self.current else self._opening
+        if uid is None:
             return -1
-        return next((i for i, s in enumerate(self.rows) if s.uid == self.current.uid), -1)
+        return next((i for i, s in enumerate(self.rows) if s.uid == uid), -1)
 
     def _step(self, delta: int) -> None:
         """Newer (-1) / older (+1) mail while one is open."""
@@ -1583,8 +1664,9 @@ class MailWindow(QMainWindow):
             self.list.setCurrentIndex(self.model.index(row, 0))
             self._open(row)
 
-    def _update_position(self) -> None:
-        row, total = self._current_row(), (len(self.uids) or len(self.rows))
+    def _update_position(self, row: int | None = None) -> None:
+        row = self._current_row() if row is None else row
+        total = len(self.uids) or len(self.rows)
         self.position.setText(f"{row + 1:,} of {total:,}" if row >= 0 else "")
         self.newer.setEnabled(row > 0)
         self.older.setEnabled(0 <= row < len(self.rows) - 1)
@@ -1695,6 +1777,8 @@ class MailWindow(QMainWindow):
             self.watcher.stop()
         if not self._keep_worker:
             self.worker.shutdown()
+        if self.reader_worker is not self.worker:
+            self.reader_worker.shutdown()
         if self in _windows:
             _windows.remove(self)
         self.view.stop()
