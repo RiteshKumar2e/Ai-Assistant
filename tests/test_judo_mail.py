@@ -343,3 +343,22 @@ def test_add_account_asks_for_the_email_first_then_the_password(monkeypatch):
     assert added == [("aman.verma@gmail.com", "abcdefghijklmnop")]
     d._back()
     assert d.pages.currentIndex() == 0
+
+
+def test_message_rows_can_be_copied(monkeypatch):
+    pytest.importorskip("PyQt6.QtWebEngineWidgets")
+    app = _app()
+    from judo_mail import app as ma
+    from judo_mail.mailbox import Summary
+
+    class W:
+        def run(self, fn, cb=lambda r: None): pass
+        def shutdown(self): pass
+    w = ma.MailWindow(W(), "me@x.com")
+    w.rows = [Summary("1", "Rahul Kumar", "Meeting at 5", "", True, False, address="rahul@x.com",
+                      snippet="See you there")]
+    w._copy_row(0, "address")
+    assert app.clipboard().text() == "rahul@x.com"
+    w._copy_row(0, "line")
+    assert app.clipboard().text() == "Rahul Kumar <rahul@x.com>\nMeeting at 5\nSee you there"
+    w.close()

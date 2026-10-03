@@ -25,7 +25,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont,
     QFontDatabase, QKeySequence, QLinearGradient, QPainter, QPainterPath,
-    QPen, QPixmap, QRadialGradient, QShortcut,
+    QPen, QPixmap, QRadialGradient, QShortcut, QTextCharFormat, QTextCursor,
 )
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -866,11 +866,22 @@ class LogWidget(QTextEdit):
         else:                                                    self._tag = "sys"
         self._tmr.start(6)
 
+    def _write(self, text: str, fmt=None):
+        """Append at the end with a cursor of our own — the user's cursor and selection
+        stay put, so text can be selected and copied while JUDO keeps typing. Follows
+        the bottom only when the view was already there."""
+        bar = self.verticalScrollBar()
+        at_bottom = bar.value() >= bar.maximum() - 4
+        cur = QTextCursor(self.document())
+        cur.movePosition(QTextCursor.MoveOperation.End)
+        cur.insertText(text, fmt) if fmt is not None else cur.insertText(text)
+        if at_bottom:
+            bar.setValue(bar.maximum())
+
     def _step(self):
         if self._pos < len(self._text):
             ch  = self._text[self._pos]
-            cur = self.textCursor()
-            fmt = cur.charFormat()
+            fmt = QTextCharFormat()
             col = {
                 "you":  qcol(C.WHITE),
                 "ai":   qcol(C.PRI),
@@ -879,18 +890,11 @@ class LogWidget(QTextEdit):
                 "sys":  qcol(C.ACC2),
             }.get(self._tag, qcol(C.TEXT))
             fmt.setForeground(QBrush(col))
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText(ch, fmt)
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
+            self._write(ch, fmt)
             self._pos += 1
         else:
             self._tmr.stop()
-            cur = self.textCursor()
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText("\n")
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
+            self._write("\n")
             QTimer.singleShot(20, self._next)
 
 _FILE_ICONS = {

@@ -122,6 +122,10 @@ class View(QWebEngineView):
                 menu, triggered=lambda: self.window().new_tab(to_url(sel))))
         menu.addSeparator()
         menu.addAction("Inspect", self.window().devtools)
+        # the menu has no Qt parent: keep it alive while it is open, or Python deletes it at once
+        # and right-click (Copy / Paste / Cut…) never shows
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._menu = menu
         menu.popup(e.globalPos())
 
 

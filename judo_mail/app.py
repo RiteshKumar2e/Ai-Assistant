@@ -29,7 +29,7 @@ from PyQt6.QtGui import (QColor, QFont, QIcon, QImage, QKeySequence, QPainter, Q
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                             QListView, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
+                             QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton,
                              QSplitter, QStackedWidget, QStyle, QStyledItemDelegate, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 
 from judo_mail import look
@@ -925,6 +925,10 @@ class MailWindow(QMainWindow):
         self.list.setUniformItemSizes(True)
         self.list.selectionModel().currentChanged.connect(lambda cur, _: self._open(cur.row()))
         self.list.verticalScrollBar().valueChanged.connect(self._maybe_more)
+        self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._row_menu)
+        QShortcut(QKeySequence.StandardKey.Copy, self.list, activated=lambda: self._copy_row(
+            self.list.currentIndex().row(), "line"), context=Qt.ShortcutContext.WidgetShortcut)
         self.list_empty = QLabel("", objectName="Empty", alignment=Qt.AlignmentFlag.AlignCenter)
         self.list_empty.hide()
         mid = QFrame(objectName="Card")
@@ -1429,6 +1433,33 @@ class MailWindow(QMainWindow):
             Compose(self, self.worker, subject=f"Fwd: {m.subject}", title="Forward",
                     body=f"\n\n---------- Forwarded message ----------\nFrom: {m.sender}\nDate: {m.date}\n"
                          f"Subject: {m.subject}\nTo: {m.to}\n\n{m.text or _plain(m.html)}").exec()
+
+    def _row_menu(self, pos: QPoint) -> None:
+        """Right-click on a message: copy its sender, address, subject or preview."""
+        row = self.list.indexAt(pos).row()
+        if not 0 <= row < len(self.rows):
+            return
+        s = self.rows[row]
+        m = QMenu(self.list)
+        m.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        if s.address:
+            m.addAction("Copy email address", lambda: self._copy_row(row, "address"))
+        m.addAction("Copy sender name", lambda: self._copy_row(row, "sender"))
+        m.addAction("Copy subject", lambda: self._copy_row(row, "subject"))
+        if s.snippet:
+            m.addAction("Copy preview text", lambda: self._copy_row(row, "snippet"))
+        m.addAction("Copy all\tCtrl+C", lambda: self._copy_row(row, "line"))
+        m.popup(self.list.viewport().mapToGlobal(pos))
+
+    def _copy_row(self, row: int, what: str) -> None:
+        if not 0 <= row < len(self.rows):
+            return
+        s = self.rows[row]
+        text = {"address": s.address, "sender": s.sender, "subject": s.subject, "snippet": s.snippet,
+                "line": f"{s.sender} <{s.address}>\n{s.subject}\n{s.snippet}".strip() if s.address
+                else f"{s.sender}\n{s.subject}\n{s.snippet}".strip()}[what]
+        QApplication.clipboard().setText(text or "")
+        self.statusBar().showMessage("Copied", 2000)
 
     def _act_current(self, op: str) -> None:
         if self.current and (op != "archive" or self.folder == FOLDERS["Inbox"]):
