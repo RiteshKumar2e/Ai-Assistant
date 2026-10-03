@@ -3,13 +3,15 @@ judo_mail/app.py — JUDO Mail: a Gmail client window (IMAP/SMTP via mailbox.py)
 
     python -m judo_mail
 
-The familiar three panes — folders, the message list, the open message — in
-JUDO's own look (look.py): sender avatars, two-line rows with friendly dates,
-an unread badge, and a compose card. Folders, Gmail-syntax search, reading
-(HTML, with the mail's JavaScript off and links opening in JUDO Browser),
-attachments, compose / reply / reply-all / forward, star, mark unread, delete
-(to Trash), and more mail loading as you scroll. All network work runs on one
-background thread so the window never freezes.
+The familiar three panes — folders and labels, the message list, the open
+message — in JUDO's own look (look.py). Inbox tabs (Primary / Promotions /
+Social / Updates with "N new"), two-line rows with sender avatars, previews,
+attachment and star marks; check several messages to archive, delete, mark
+read/unread or star them together; Gmail-syntax search; reading (HTML on a
+white page, the mail's JavaScript off, links in JUDO Browser), attachments,
+Unsubscribe, compose / reply / reply-all / forward. The avatar opens the
+account menu: profile photo, switch or add Gmail accounts, sign out, theme.
+All network work runs on one background thread so the window never freezes.
 """
 from __future__ import annotations
 
@@ -17,24 +19,35 @@ import html
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
-from PyQt6.QtCore import QEvent, QObject, QRect, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import (QColor, QFont, QKeySequence, QPainter, QShortcut, QStandardItem, QStandardItemModel,
-                         QTextDocument)
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import (QColor, QFont, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut,
+                         QStandardItem, QStandardItemModel, QTextDocument)
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                             QListView, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-                             QSplitter, QStyle, QStyledItemDelegate, QTextEdit, QToolButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                             QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton,
+                             QSplitter, QStyle, QStyledItemDelegate, QTextEdit, QToolButton, QVBoxLayout, QWidget,
+                             QWidgetAction)
 
 from judo_mail import look
+from judo_mail import mailbox as mbx
 from judo_mail.mailbox import FOLDERS, Mail, Mailbox, Summary
 
 PAGE = 50
 REFRESH_MS = 120_000
 SUMMARY = Qt.ItemDataRole.UserRole + 1
-FOLDER_ICONS = {"Inbox": "inbox", "Starred": "star_border", "Important": "important", "Sent": "send",
-                "Drafts": "draft", "All Mail": "all", "Spam": "spam", "Trash": "trash"}
+KIND, TARGET, FIXED_QUERY = Qt.ItemDataRole.UserRole + 2, Qt.ItemDataRole.UserRole + 3, Qt.ItemDataRole.UserRole + 4
+# sidebar: (name, icon, IMAP folder, fixed search) — Purchases is an Inbox category, like in Gmail
+SIDEBAR = [("Inbox", "inbox", FOLDERS["Inbox"], ""), ("Starred", "star_border", FOLDERS["Starred"], ""),
+           ("Important", "important", FOLDERS["Important"], ""), ("Sent", "send", FOLDERS["Sent"], ""),
+           ("Drafts", "draft", FOLDERS["Drafts"], ""), ("Purchases", "bag", FOLDERS["Inbox"], "category:purchases"),
+           ("All Mail", "all", FOLDERS["All Mail"], ""), ("Spam", "spam", FOLDERS["Spam"], ""),
+           ("Trash", "trash", FOLDERS["Trash"], "")]
+TABS = [("primary", "Primary", "inbox"), ("promotions", "Promotions", "tag"), ("social", "Social", "people"),
+        ("updates", "Updates", "info")]
+_windows: list = []          # open windows (a theme or account change opens a fresh one)
 
 
 class Worker(QObject):
@@ -64,14 +77,40 @@ class Worker(QObject):
         self._pool.shutdown(wait=False)
 
 
+class _Relay(QObject):
+    done = pyqtSignal(object, object)
+
+
+_relay: _Relay | None = None
+
+
+def run_async(fn, cb) -> None:
+    """One-off background call (e.g. checking a new account's password), result on the UI thread."""
+    global _relay
+    if _relay is None:
+        _relay = _Relay()
+        _relay.done.connect(lambda cb_, r: cb_(r))
+
+    def job():
+        try:
+            r = fn()
+        except Exception as e:
+            r = e
+        _relay.done.emit(cb, r)
+    ThreadPoolExecutor(1).submit(job)
+
+
 class MailPage(QWebEnginePage):
-    """A mail is a document, not an app: links go to JUDO Browser."""
+    """A mail is a document, not an app: links go to JUDO Browser, and its page noise stays quiet."""
 
     def acceptNavigationRequest(self, url, nav_type, is_main):
         if nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
             ThreadPoolExecutor(1).submit(_open_link, url.toString())
             return False
         return True
+
+    def javaScriptConsoleMessage(self, *a):
+        pass   # newsletters' own warnings (meta tags, mixed content…) are not JUDO Mail's errors
 
 
 def _open_link(url: str) -> None:
@@ -98,7 +137,27 @@ def _tool(name: str, tip: str, fn, t: dict, size: int = 20) -> QToolButton:
     return b
 
 
-def _avatar(p: QPainter, rect: QRectF, name: str, key: str) -> None:
+def _round_photo(path: Path, size: int) -> QPixmap | None:
+    img = QImage(str(path))
+    if img.isNull():
+        return None
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    clip = QPainterPath()
+    clip.addEllipse(0, 0, size, size)
+    p.setClipPath(clip)
+    p.drawImage(QRect(0, 0, size, size), img.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                                    Qt.TransformationMode.SmoothTransformation))
+    p.end()
+    return pm
+
+
+def _avatar(p: QPainter, rect: QRectF, name: str, key: str, photo: QPixmap | None = None) -> None:
+    if photo is not None:
+        p.drawPixmap(rect.toRect(), photo)
+        return
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QColor(look.avatar_color(key or name)))
     p.drawEllipse(rect)
@@ -110,46 +169,60 @@ def _avatar(p: QPainter, rect: QRectF, name: str, key: str) -> None:
 
 
 class Avatar(QWidget):
-    def __init__(self, size: int, parent=None):
+    clicked = pyqtSignal()
+
+    def __init__(self, size: int, parent=None, clickable: bool = False):
         super().__init__(parent)
         self.setFixedSize(size, size)
-        self.name, self.key = "", ""
+        self.name, self.key, self.photo = "", "", None
+        if clickable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-    def set(self, name: str, key: str) -> None:
+    def set(self, name: str, key: str, photo: Path | None = None) -> None:
         self.name, self.key = name, key
+        self.photo = _round_photo(photo, self.width() * 2) if photo and photo.exists() else None
         self.update()
+
+    def mousePressEvent(self, e):
+        self.clicked.emit()
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        _avatar(p, QRectF(self.rect()), self.name, self.key)
+        _avatar(p, QRectF(self.rect()), self.name, self.key, self.photo)
 
 
 # ── the message list ────────────────────────────────────────────────────────
 
 class MessageDelegate(QStyledItemDelegate):
-    """Two-line rows: avatar · sender · date / subject · star. Unread rows are bold
-    with an accent dot; clicking the star toggles it."""
-    ROW = 70
+    """Two-line rows: ☐ · avatar · sender · date / subject — preview · 📎 · ☆.
+    Unread rows are bold with an accent mark; the checkbox and star are clickable."""
+    ROW = 72
 
-    def __init__(self, t: dict, on_star, parent=None):
+    def __init__(self, t: dict, is_checked, on_check, on_star, parent=None):
         super().__init__(parent)
-        self.t, self.on_star = t, on_star
+        self.t, self.is_checked, self.on_check, self.on_star = t, is_checked, on_check, on_star
 
     def sizeHint(self, option, index):
         return QSize(option.rect.width(), self.ROW)
 
-    def _star_rect(self, r: QRect) -> QRect:
-        return QRect(r.right() - 34, r.top() + 36, 22, 22)
+    @staticmethod
+    def _check_rect(r: QRect) -> QRect:
+        return QRect(r.left() + 16, r.top() + 27, 18, 18)
+
+    @staticmethod
+    def _star_rect(r: QRect) -> QRect:
+        return QRect(r.right() - 34, r.top() + 38, 22, 22)
 
     def paint(self, p: QPainter, option, index):
         s: Summary = index.data(SUMMARY)
         t, r = self.t, option.rect
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        checked = self.is_checked(s.uid)
         selected = option.state & QStyle.StateFlag.State_Selected
         hover = option.state & QStyle.StateFlag.State_MouseOver
-        bg = t["select"] if selected else t["hover"] if hover else None
+        bg = t["select"] if selected or checked else t["hover"] if hover else None
         if bg:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(bg))
@@ -157,27 +230,52 @@ class MessageDelegate(QStyledItemDelegate):
         if s.unread:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(t["accent"]))
-            p.drawEllipse(QRectF(r.left() + 11, r.center().y() - 3, 6, 6))
-        _avatar(p, QRectF(r.left() + 24, r.top() + 15, 40, 40), s.sender, s.address)
+            p.drawRoundedRect(QRectF(r.left() + 7, r.top() + 20, 3, r.height() - 40), 1.5, 1.5)
 
-        x, right = r.left() + 76, r.right() - 16
-        bold = QFont("Segoe UI", 10, QFont.Weight.Bold if s.unread else QFont.Weight.Normal)
-        date_font = QFont("Segoe UI", 9, QFont.Weight.DemiBold if s.unread else QFont.Weight.Normal)
+        cb = QRectF(self._check_rect(r))
+        if checked:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(t["accent"]))
+            p.drawRoundedRect(cb, 4, 4)
+            p.setPen(QPen(QColor("#FFFFFF"), 2.2, cap=Qt.PenCapStyle.RoundCap, join=Qt.PenJoinStyle.RoundJoin))
+            tick = QPainterPath()
+            tick.moveTo(cb.left() + 4, cb.center().y())
+            tick.lineTo(cb.left() + 7.5, cb.bottom() - 4.5)
+            tick.lineTo(cb.right() - 4, cb.top() + 5)
+            p.drawPath(tick)
+        else:
+            p.setPen(QPen(QColor(t["faint"] if (hover or selected) else t["line"]), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(cb.adjusted(1, 1, -1, -1), 4, 4)
+        _avatar(p, QRectF(r.left() + 46, r.top() + 16, 40, 40), s.sender, s.address)
+
+        x, right = r.left() + 98, r.right() - 16
         date = look.when_text(s.when, s.date)
-        p.setFont(date_font)
+        p.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold if s.unread else QFont.Weight.Normal))
         dw = p.fontMetrics().horizontalAdvance(date)
         p.setPen(QColor(t["accent"] if s.unread else t["sub"]))
         p.drawText(QRect(right - dw, r.top() + 14, dw, 20), Qt.AlignmentFlag.AlignVCenter, date)
 
-        p.setFont(bold)
+        p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold if s.unread else QFont.Weight.Normal))
         p.setPen(QColor(t["text"]))
-        sender = p.fontMetrics().elidedText(s.sender or "(unknown)", Qt.TextElideMode.ElideRight, right - dw - 12 - x)
-        p.drawText(QRect(x, r.top() + 14, right - dw - 12 - x, 20), Qt.AlignmentFlag.AlignVCenter, sender)
+        w1 = right - dw - 12 - x
+        p.drawText(QRect(x, r.top() + 14, w1, 20), Qt.AlignmentFlag.AlignVCenter,
+                   p.fontMetrics().elidedText(s.sender or "(unknown)", Qt.TextElideMode.ElideRight, w1))
 
+        line2 = r.top() + 39
+        w2 = right - 32 - x - (24 if s.attachment else 0)
         p.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold if s.unread else QFont.Weight.Normal))
+        subject = p.fontMetrics().elidedText(s.subject, Qt.TextElideMode.ElideRight, int(w2 * 0.72))
+        sw = p.fontMetrics().horizontalAdvance(subject)
         p.setPen(QColor(t["text"] if s.unread else t["sub"]))
-        subject = p.fontMetrics().elidedText(s.subject, Qt.TextElideMode.ElideRight, right - 30 - x)
-        p.drawText(QRect(x, r.top() + 37, right - 30 - x, 20), Qt.AlignmentFlag.AlignVCenter, subject)
+        p.drawText(QRect(x, line2, sw + 2, 20), Qt.AlignmentFlag.AlignVCenter, subject)
+        if s.snippet and w2 - sw > 40:
+            p.setFont(QFont("Segoe UI", 9))
+            p.setPen(QColor(t["faint"]))
+            rest = p.fontMetrics().elidedText(f"  —  {s.snippet}", Qt.TextElideMode.ElideRight, w2 - sw)
+            p.drawText(QRect(x + sw, line2, w2 - sw, 20), Qt.AlignmentFlag.AlignVCenter, rest)
+        if s.attachment:
+            look.icon("attach", t["sub"], 16).paint(p, QRect(right - 56, line2 + 2, 16, 16))
 
         star = self._star_rect(r)
         name, color = ("star", t["star"]) if s.starred else ("star_border", t["faint"])
@@ -186,15 +284,20 @@ class MessageDelegate(QStyledItemDelegate):
         p.restore()
 
     def editorEvent(self, event, model, option, index):
-        if (event.type() == QEvent.Type.MouseButtonRelease
-                and self._star_rect(option.rect).contains(event.position().toPoint())):
-            self.on_star(index.row())
-            return True
+        if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+            pos = event.position().toPoint()
+            on_check = self._check_rect(option.rect).adjusted(-8, -8, 8, 8).contains(pos)
+            on_star = self._star_rect(option.rect).contains(pos)
+            if on_check or on_star:
+                if event.type() == QEvent.Type.MouseButtonRelease:
+                    (self.on_check if on_check else self.on_star)(index.row())
+                return True         # don't also open the message
         return super().editorEvent(event, model, option, index)
 
 
 class FolderDelegate(QStyledItemDelegate):
-    """Folder rows: icon, name and an unread count; the current folder is a filled pill."""
+    """Sidebar rows: icon, name and an unread count; the current one is a filled pill.
+    Section headers ("Labels") are plain captions."""
 
     def __init__(self, t: dict, parent=None):
         super().__init__(parent)
@@ -202,26 +305,34 @@ class FolderDelegate(QStyledItemDelegate):
         self.counts: dict[str, int] = {}
 
     def sizeHint(self, option, index):
-        return QSize(option.rect.width(), 40)
+        return QSize(option.rect.width(), 46 if index.data(KIND) == "header" else 40)
 
     def paint(self, p: QPainter, option, index):
-        t, r, name = self.t, option.rect, index.data()
-        selected = option.state & QStyle.StateFlag.State_Selected
+        t, r, name, kind = self.t, option.rect, index.data(), index.data(KIND)
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if kind == "header":
+            p.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+            p.setPen(QColor(t["text"]))
+            p.drawText(QRect(r.left() + 16, r.top() + 14, r.width() - 30, 28), Qt.AlignmentFlag.AlignVCenter, name)
+            p.restore()
+            return
+        selected = option.state & QStyle.StateFlag.State_Selected
         if selected or option.state & QStyle.StateFlag.State_MouseOver:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(t["select"] if selected else t["hover"]))
             p.drawRoundedRect(QRectF(r.adjusted(0, 2, -6, -2)), 18, 18)
         color = t["accent"] if selected else t["sub"]
-        look.icon(FOLDER_ICONS.get(name, "inbox"), color, 20).paint(p, QRect(r.left() + 16, r.top() + 10, 20, 20))
+        ic = "label" if kind == "label" else next((i for n, i, *_ in SIDEBAR if n == name), "inbox")
+        look.icon(ic, color, 20).paint(p, QRect(r.left() + 16, r.top() + 10, 20, 20))
         count = self.counts.get(name, 0)
         p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold if selected or count else QFont.Weight.Normal))
         p.setPen(QColor(t["accent"] if selected else t["text"]))
-        p.drawText(QRect(r.left() + 50, r.top(), r.width() - 110, r.height()), Qt.AlignmentFlag.AlignVCenter, name)
+        p.drawText(QRect(r.left() + 50, r.top(), r.width() - 120, r.height()), Qt.AlignmentFlag.AlignVCenter,
+                   p.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, r.width() - 120))
         if count:
             p.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-            p.drawText(QRect(r.right() - 64, r.top(), 50, r.height()),
+            p.drawText(QRect(r.right() - 74, r.top(), 60, r.height()),
                        Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"{count:,}")
         p.restore()
 
@@ -315,6 +426,69 @@ class Compose(QDialog):
         self.accept()
 
 
+# ── accounts ────────────────────────────────────────────────────────────────
+
+class AccountDialog(QDialog):
+    """Add a Gmail account: address + App Password, checked with Gmail before it is saved."""
+
+    def __init__(self, parent=None, first: bool = False):
+        super().__init__(parent, windowTitle="Add a Gmail account")
+        self.t = parent.t if parent else look.palette()
+        if not parent:
+            self.setStyleSheet(look.stylesheet(self.t))
+        self.setWindowIcon(look.app_icon())
+        self.setMinimumWidth(540)
+        logo = QLabel()
+        logo.setPixmap(look.app_icon().pixmap(48, 48))
+        title = QLabel("Welcome to JUDO Mail" if first else "Add another account", objectName="Title")
+        hint = QLabel("Sign in with your Gmail address and a Google <b>App Password</b> — a 16-letter password "
+                      "made for one app. Your normal Google password won't work here, and the App Password is "
+                      "kept only on this PC.", objectName="Hint", wordWrap=True)
+        how = QPushButton("Create an App Password  (Google Account → Security → App passwords)  ↗", objectName="Link")
+        how.setCursor(Qt.CursorShape.PointingHandCursor)
+        how.clicked.connect(lambda: ThreadPoolExecutor(1).submit(_open_link, "https://myaccount.google.com/apppasswords"))
+        self.address = QLineEdit(objectName="Field", placeholderText="you@gmail.com")
+        self.password = QLineEdit(objectName="Field", placeholderText="App Password — xxxx xxxx xxxx xxxx")
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.status = QLabel("", objectName="Hint", wordWrap=True)
+        self.ok = QPushButton("Sign in", objectName="Primary")
+        self.ok.setDefault(True)
+        self.ok.clicked.connect(self._check)
+        cancel = QPushButton("Cancel", objectName="Pill")
+        cancel.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.ok)
+        card = QFrame(objectName="Card")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(28, 24, 28, 22)
+        cl.setSpacing(12)
+        for w in (logo, title, hint, how, self.address, self.password, self.status):
+            cl.addWidget(w)
+        cl.addLayout(buttons)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.addWidget(card)
+
+    def _check(self) -> None:
+        address, pw = self.address.text().strip(), self.password.text().replace(" ", "")
+        if "@" not in address or len(pw) < 8:
+            self.status.setText("Enter the Gmail address and its 16-letter App Password.")
+            return
+        self.ok.setEnabled(False)
+        self.status.setText("Checking with Gmail…")
+        run_async(lambda: mbx.check_login(address, pw), lambda r: self._checked(r, address, pw))
+
+    def _checked(self, result, address: str, pw: str) -> None:
+        self.ok.setEnabled(True)
+        if isinstance(result, Exception):
+            self.status.setText(f"Gmail did not accept that — check the address and App Password.\n({result})")
+            return
+        mbx.add_account(address, pw)
+        self.accept()
+
+
 # ── the window ──────────────────────────────────────────────────────────────
 
 class MailWindow(QMainWindow):
@@ -324,19 +498,22 @@ class MailWindow(QMainWindow):
         self.setWindowTitle("JUDO Mail")
         self.setWindowIcon(look.app_icon())
         self.setStyleSheet(look.stylesheet(t))
-        self.resize(1360, 880)
+        self.resize(1400, 880)
         self.worker = worker or Worker()
-        self.folder, self.query = FOLDERS["Inbox"], ""
+        self._keep_worker = False
+        self.folder, self.fixed_query, self.tab, self.query = FOLDERS["Inbox"], "", "primary", ""
         self.uids: list[str] = []
         self.rows: list[Summary] = []
+        self.checked: set[str] = set()
         self.current: Mail | None = None
+        self.current_summary: Summary | None = None
         self._loading = False
         if not address:
             try:
-                from judo_mail.mailbox import credentials
-                address = credentials()[0]
+                address = mbx.credentials()[0]
             except Exception:
                 address = ""
+        self.address = address
 
         # top bar: brand · search · refresh · account
         brand = QHBoxLayout()
@@ -353,9 +530,10 @@ class MailWindow(QMainWindow):
         self.search.setClearButtonEnabled(True)
         self.search.returnPressed.connect(self._search)
         self.search.setMaximumWidth(720)
-        me = Avatar(36)
-        me.set(address or "?", address)
-        me.setToolTip(address or "Gmail account not set")
+        self.me = Avatar(38, clickable=True)
+        self.me.set(address or "?", address, look.photo_path(address))
+        self.me.setToolTip(f"JUDO Mail account\n{address}" if address else "Add a Gmail account")
+        self.me.clicked.connect(self._account_menu)
         top = QHBoxLayout()
         top.setContentsMargins(18, 10, 18, 6)
         top.addLayout(brand)
@@ -364,9 +542,9 @@ class MailWindow(QMainWindow):
         top.addStretch(0)
         top.addWidget(_tool("refresh", "Refresh (F5)", lambda: self.load_folder(), t, 22))
         top.addSpacing(6)
-        top.addWidget(me)
+        top.addWidget(self.me)
 
-        # left: compose + folders
+        # left: compose + folders + labels
         compose = QPushButton("  Compose", objectName="Compose")
         compose.setIcon(look.icon("edit", "#FFFFFF", 20))
         compose.setIconSize(QSize(20, 20))
@@ -376,30 +554,64 @@ class MailWindow(QMainWindow):
         self.folder_delegate = FolderDelegate(t, self.folders)
         self.folders.setItemDelegate(self.folder_delegate)
         self.folders.setMouseTracking(True)
-        for f in FOLDERS:
-            self.folders.addItem(QListWidgetItem(f))
+        for n, _, folder, q in SIDEBAR:
+            self._sidebar_item(n, "folder", folder, q)
         self.folders.setCurrentRow(0)
-        self.folders.currentTextChanged.connect(self._folder_changed)
+        self.folders.currentItemChanged.connect(self._folder_changed)
         left = QWidget()
-        left.setFixedWidth(250)
+        left.setFixedWidth(256)
         lv = QVBoxLayout(left)
         lv.setContentsMargins(12, 8, 6, 12)
         lv.addWidget(compose, 0, Qt.AlignmentFlag.AlignLeft)
         lv.addSpacing(14)
         lv.addWidget(self.folders, 1)
 
-        # middle: the list
+        # middle: title, Inbox tabs, bulk toolbar, the list
         self.title = QLabel("Inbox", objectName="Title")
         self.count = QLabel("", objectName="Count")
         lh = QHBoxLayout()
-        lh.setContentsMargins(20, 16, 16, 6)
+        lh.setContentsMargins(20, 14, 16, 2)
         lh.addWidget(self.title)
         lh.addStretch(1)
         lh.addWidget(self.count)
+        self.tabs: dict[str, QPushButton] = {}
+        self.tab_bar = QWidget()
+        tl = QHBoxLayout(self.tab_bar)
+        tl.setContentsMargins(10, 0, 10, 0)
+        tl.setSpacing(0)
+        for key, label, ic in TABS:
+            b = QPushButton(f"  {label}", objectName="Tab")
+            b.setIcon(look.icon(ic, t["sub"], 18))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _, k=key: self._tab(k))
+            tl.addWidget(b, 1)
+            self.tabs[key] = b
+        self.toolbar = QWidget(objectName="Toolbar")
+        tb = QHBoxLayout(self.toolbar)
+        tb.setContentsMargins(22, 4, 16, 4)
+        tb.setSpacing(2)
+        self.select_all = QCheckBox()
+        self.select_all.setToolTip("Select all loaded conversations")
+        self.select_all.clicked.connect(self._select_all)
+        tb.addWidget(self.select_all)
+        tb.addSpacing(8)
+        tb.addWidget(_tool("refresh", "Refresh", lambda: self.load_folder(), t, 18))
+        self.bulk: dict[str, QToolButton] = {}
+        for key, ic, tip in (("archive", "archive", "Archive"), ("delete", "trash", "Delete"),
+                             ("read", "drafts_read", "Mark as read"), ("unread", "mail", "Mark as unread"),
+                             ("star", "star_border", "Star")):
+            b = _tool(ic, tip, lambda _, k=key: self._bulk(k), t, 18)
+            tb.addWidget(b)
+            self.bulk[key] = b
+        tb.addSpacing(10)
+        self.selected_label = QLabel("", objectName="Selected")
+        tb.addWidget(self.selected_label)
+        tb.addStretch(1)
         self.model = QStandardItemModel(self)
         self.list = QListView()
         self.list.setModel(self.model)
-        self.list.setItemDelegate(MessageDelegate(t, self._star_row, self.list))
+        self.list.setItemDelegate(MessageDelegate(t, lambda uid: uid in self.checked, self._check_row,
+                                                  self._star_row, self.list))
         self.list.setMouseTracking(True)
         self.list.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self.list.setUniformItemSizes(True)
@@ -410,7 +622,10 @@ class MailWindow(QMainWindow):
         mid = QFrame(objectName="Card")
         mv = QVBoxLayout(mid)
         mv.setContentsMargins(0, 0, 0, 8)
+        mv.setSpacing(0)
         mv.addLayout(lh)
+        mv.addWidget(self.tab_bar)
+        mv.addWidget(self.toolbar)
         mv.addWidget(self.list, 1)
         mv.addWidget(self.list_empty, 1)
 
@@ -419,12 +634,20 @@ class MailWindow(QMainWindow):
                               textInteractionFlags=Qt.TextInteractionFlag.TextSelectableByMouse)
         self.sender_avatar = Avatar(44)
         self.sender = QLabel(objectName="Sender", textInteractionFlags=Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.unsub = QPushButton("Unsubscribe", objectName="Unsub")
+        self.unsub.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.unsub.clicked.connect(self._unsubscribe)
+        sender_row = QHBoxLayout()
+        sender_row.setSpacing(10)
+        sender_row.addWidget(self.sender)
+        sender_row.addWidget(self.unsub)
+        sender_row.addStretch(1)
         self.recipients = QLabel(objectName="Sub", wordWrap=True,
                                  textInteractionFlags=Qt.TextInteractionFlag.TextSelectableByMouse)
         self.when = QLabel(objectName="Sub")
         who = QVBoxLayout()
         who.setSpacing(2)
-        who.addWidget(self.sender)
+        who.addLayout(sender_row)
         who.addWidget(self.recipients)
         meta = QHBoxLayout()
         meta.setSpacing(12)
@@ -437,9 +660,10 @@ class MailWindow(QMainWindow):
         for key, ic, tip, fn in (("reply", "reply", "Reply (Ctrl+R)", self._reply),
                                  ("reply_all", "reply_all", "Reply all", lambda: self._reply(all_=True)),
                                  ("forward", "forward", "Forward", self._forward),
-                                 ("star", "star_border", "Star", self._star),
-                                 ("unread", "mail", "Mark as unread", self._unread),
-                                 ("delete", "trash", "Delete (Del)", self._delete)):
+                                 ("archive", "archive", "Archive (E)", lambda: self._act_current("archive")),
+                                 ("delete", "trash", "Delete (Del)", lambda: self._act_current("delete")),
+                                 ("unread", "mail", "Mark as unread", lambda: self._act_current("unread")),
+                                 ("star", "star_border", "Star", self._star)):
             b = _tool(ic, tip, fn, t)
             bar.addWidget(b)
             self.actions[key] = b
@@ -488,7 +712,7 @@ class MailWindow(QMainWindow):
         split.setHandleWidth(12)
         split.addWidget(mid)
         split.addWidget(right)
-        split.setSizes([500, 760])
+        split.setSizes([580, 720])
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 14, 0)
         body.addWidget(left)
@@ -500,52 +724,108 @@ class MailWindow(QMainWindow):
         cl.addLayout(body, 1)
         self.setCentralWidget(central)
 
-        for keys, fn in (("Ctrl+N", self.compose), ("Ctrl+R", self._reply), ("Delete", self._delete),
+        for keys, fn in (("Ctrl+N", self.compose), ("Ctrl+R", self._reply),
+                         ("Delete", lambda: self._act_current("delete")), ("E", lambda: self._act_current("archive")),
                          ("F5", lambda: self.load_folder()), ("Ctrl+F", self.search.setFocus),
                          ("/", self.search.setFocus)):
             QShortcut(QKeySequence(keys), self, activated=fn)
         self._reader_enabled(False)
+        self._update_toolbar()
         self.load_folder()
+        self.worker.run(lambda mb: mb.labels(), self._got_labels)
         timer = QTimer(self, interval=REFRESH_MS)
         timer.timeout.connect(self._auto_refresh)
         timer.start()
 
-    # list
+    # ── sidebar, tabs, list ────────────────────────────────────────────────
+    def _sidebar_item(self, name: str, kind: str, folder: str = "", query: str = "") -> QListWidgetItem:
+        item = QListWidgetItem(name)
+        item.setData(KIND, kind)
+        item.setData(TARGET, folder)
+        item.setData(FIXED_QUERY, query)
+        if kind == "header":
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self.folders.addItem(item)
+        return item
+
+    def _got_labels(self, result) -> None:
+        if isinstance(result, list) and result:
+            self._sidebar_item("Labels", "header")
+            for name in result:
+                self._sidebar_item(name, "label", name, "")
+
     def compose(self) -> None:
         Compose(self, self.worker).exec()
 
-    def _folder_changed(self, name: str) -> None:
-        self.folder, self.query = FOLDERS[name], ""
+    def _folder_changed(self, item, _prev=None) -> None:
+        if item is None or item.data(KIND) == "header":
+            return
+        self.folder, self.fixed_query, self.query = item.data(TARGET), item.data(FIXED_QUERY) or "", ""
+        self.tab = "primary"
         self.search.clear()
+        self.load_folder()
+
+    def _tabs_on(self) -> bool:
+        return self.folder == FOLDERS["Inbox"] and not self.fixed_query and not self.query
+
+    def _tab(self, key: str) -> None:
+        self.tab = key
         self.load_folder()
 
     def _search(self) -> None:
         self.query = self.search.text().strip()
         self.load_folder()
 
-    def _folder_name(self) -> str:
-        return next(k for k, v in FOLDERS.items() if v == self.folder)
+    def _effective_query(self) -> str:
+        parts = [self.fixed_query, f"category:{self.tab}" if self._tabs_on() else "", self.query]
+        return " ".join(p for p in parts if p)
+
+    def _view_name(self) -> str:
+        item = self.folders.currentItem()
+        name = item.text() if item else "Inbox"
+        return dict((k, l) for k, l, _ in TABS)[self.tab] if self._tabs_on() and self.tab != "primary" else name
 
     def load_folder(self) -> None:
         self.statusBar().showMessage("Loading…")
-        folder, query = self.folder, self.query
+        folder, query = self.folder, self._effective_query()
+        self.tab_bar.setVisible(self._tabs_on())
+        icons = {k: i for k, _, i in TABS}
+        for key, b in self.tabs.items():
+            b.setProperty("on", key == self.tab)
+            b.setIcon(look.icon(icons[key], self.t["accent" if key == self.tab else "sub"], 18))
+            b.style().unpolish(b)
+            b.style().polish(b)
         self.worker.run(lambda mb: (mb.uids(folder, query), folder, query), self._got_uids)
+        self._refresh_counts()
+
+    def _refresh_counts(self) -> None:
         self.worker.run(lambda mb: mb.unseen(FOLDERS["Inbox"]), self._got_unseen)
+        if self._tabs_on():
+            self.worker.run(lambda mb: mb.category_new(), self._got_new)
 
     def _got_unseen(self, result) -> None:
         if isinstance(result, int):
             self.folder_delegate.counts["Inbox"] = result
             self.folders.viewport().update()
 
+    def _got_new(self, result) -> None:
+        if not isinstance(result, dict):
+            return
+        for key, label, _ in TABS:
+            n = result.get(key, 0)
+            self.tabs[key].setText(f"  {label}" + (f"   ·  {n} new" if n else ""))
+
     def _got_uids(self, result) -> None:
         if self._failed(result):
             return
         uids, folder, query = result
-        if (folder, query) != (self.folder, self.query):
+        if (folder, query) != (self.folder, self._effective_query()):
             return   # the user moved on while this was loading
         self.uids, self.rows = uids, []
+        self.checked.clear()
         self.model.clear()
         self._reader_enabled(False)
+        self._update_toolbar()
         self._load_more()
 
     def _load_more(self) -> None:
@@ -576,13 +856,14 @@ class MailWindow(QMainWindow):
             item.setEditable(False)
             self.model.appendRow(item)
             self.rows.append(s)
+        self._update_toolbar()
         self._status()
 
     def _status(self) -> None:
-        name = self._folder_name()
+        name = self._view_name()
         self.title.setText(f"Results for “{self.query}”" if self.query else name)
         n, shown = len(self.uids), len(self.rows)
-        self.count.setText(f"{min(shown, 1) if n else 0}–{shown:,} of {n:,}" if n else "")
+        self.count.setText(f"1–{shown:,} of {n:,}" if n else "")
         empty = n == 0
         self.list.setVisible(not empty)
         self.list_empty.setVisible(empty)
@@ -591,15 +872,75 @@ class MailWindow(QMainWindow):
         self.setWindowTitle(f"{name} — JUDO Mail")
 
     def _auto_refresh(self) -> None:
-        # only when looking at the top of the inbox list, so nothing jumps under the user
-        if self.folder == FOLDERS["Inbox"] and not self.query and self.list.currentIndex().row() <= 0:
+        # only at the top of the inbox list with nothing checked, so nothing jumps under the user
+        if (self.folder == FOLDERS["Inbox"] and not self.query and not self.checked
+                and self.list.currentIndex().row() <= 0):
             self.load_folder()
 
     def _refresh_row(self, row: int) -> None:
-        idx = self.model.index(row, 0)
-        self.list.update(idx)
+        self.list.update(self.model.index(row, 0))
 
-    # reading
+    # ── checking several messages ──────────────────────────────────────────
+    def _check_row(self, row: int) -> None:
+        if 0 <= row < len(self.rows):
+            self.checked.symmetric_difference_update({self.rows[row].uid})
+            self._refresh_row(row)
+            self._update_toolbar()
+
+    def _select_all(self) -> None:
+        loaded = {s.uid for s in self.rows}
+        self.checked = set() if loaded and self.checked >= loaded else loaded
+        self.list.viewport().update()
+        self._update_toolbar()
+
+    def _update_toolbar(self) -> None:
+        n = len(self.checked)
+        for key, b in self.bulk.items():
+            b.setVisible(n > 0 and (key != "archive" or self.folder == FOLDERS["Inbox"]))
+        self.selected_label.setText(f"{n:,} selected" if n else "")
+        loaded = len(self.rows)
+        self.select_all.setTristate(False)
+        self.select_all.setCheckState(Qt.CheckState.Checked if n and n >= loaded else
+                                      Qt.CheckState.PartiallyChecked if n else Qt.CheckState.Unchecked)
+
+    def _bulk(self, op: str, uids: list[str] | None = None) -> None:
+        uids = uids if uids is not None else [s.uid for s in self.rows if s.uid in self.checked]
+        if not uids:
+            return
+        folder, joined = self.folder, ",".join(uids)
+        work = {"archive": lambda mb: mb.archive(folder, joined), "delete": lambda mb: mb.trash(folder, joined),
+                "read": lambda mb: mb.mark_read(folder, joined, True),
+                "unread": lambda mb: mb.mark_read(folder, joined, False),
+                "star": lambda mb: mb.star(folder, joined, True)}[op]
+        self.worker.run(work, lambda r: self._failed(r) or self._bulk_done(op, set(uids)))
+
+    def _bulk_done(self, op: str, uids: set[str]) -> None:
+        if op in ("archive", "delete"):
+            for row in reversed(range(len(self.rows))):
+                if self.rows[row].uid in uids:
+                    self.model.removeRow(row)
+                    self.rows.pop(row)
+            self.uids = [u for u in self.uids if u not in uids]
+            if self.current and self.current.uid in uids:
+                self._reader_enabled(False)
+        else:
+            for row, s in enumerate(self.rows):
+                if s.uid in uids:
+                    if op == "star":
+                        s.starred = True
+                    else:
+                        s.unread = op == "unread"
+                    self._refresh_row(row)
+        self.checked -= uids
+        self._update_toolbar()
+        self._status()
+        self._refresh_counts()
+        n = len(uids)
+        what = {"archive": "archived", "delete": "moved to Trash", "read": "marked as read",
+                "unread": "marked as unread", "star": "starred"}[op]
+        self.statusBar().showMessage(f"{n} conversation{'s' if n != 1 else ''} {what}", 5000)
+
+    # ── reading ────────────────────────────────────────────────────────────
     def _open(self, row: int) -> None:
         if not 0 <= row < len(self.rows):
             return
@@ -617,13 +958,14 @@ class MailWindow(QMainWindow):
         if self._failed(result):
             return
         mail, row = result
-        if row < len(self.rows) and self.rows[row].uid == mail.uid:
-            if self.rows[row].unread and self.folder == FOLDERS["Inbox"]:
+        s = self.rows[row] if row < len(self.rows) and self.rows[row].uid == mail.uid else None
+        if s and s.unread:
+            if self.folder == FOLDERS["Inbox"]:
                 self.folder_delegate.counts["Inbox"] = max(0, self.folder_delegate.counts.get("Inbox", 0) - 1)
                 self.folders.viewport().update()
-            self.rows[row].unread = False
+            s.unread = False
             self._refresh_row(row)
-        self.current = mail
+        self.current, self.current_summary = mail, s
         e = html.escape
         from email.utils import getaddresses
         name, addr = (getaddresses([mail.sender]) or [("", "")])[0]
@@ -631,8 +973,8 @@ class MailWindow(QMainWindow):
         self.sender_avatar.set(name or addr, addr)
         self.sender.setText(f"{e(name or addr)} <span style='font-weight:400;color:{self.t['sub']}'>"
                             f"{'&lt;' + e(addr) + '&gt;' if name else ''}</span>")
+        self.unsub.setVisible(bool(s and s.unsubscribe))
         self.recipients.setText(f"to {e(mail.to)}" + (f" · cc {e(mail.cc)}" if mail.cc else ""))
-        s = self.rows[row] if row < len(self.rows) else None
         self.when.setText(s.when.strftime("%a, %d %b %Y, %I:%M %p") if s and s.when else e(mail.date))
         while self.attach_row.count():
             w = self.attach_row.takeAt(0).widget()
@@ -646,7 +988,8 @@ class MailWindow(QMainWindow):
             self.attach_row.addWidget(chip)
         self.attach_row.addStretch(1)
         # HTML mail is laid out by its sender for a white page, so it gets one even in dark mode;
-        # plain text follows the theme
+        # plain text follows the theme. The page is served as plain http so a newsletter's http://
+        # images and fonts load like they do in a browser instead of being blocked as mixed content.
         paper = bool(mail.html)
         self.paper.setStyleSheet("" if paper else "#Paper { background: transparent; border: none; }")
         self.view.page().setBackgroundColor(QColor("#FFFFFF" if paper else self.t["card"]))
@@ -654,7 +997,8 @@ class MailWindow(QMainWindow):
         body = (base + mail.html) if paper else (
             f"<pre style='white-space:pre-wrap;font:15px Segoe UI, system-ui;color:{self.t['text']};margin:4px'>"
             f"{e(mail.text)}</pre>")
-        self.view.setHtml(body, QUrl("https://mail.judo.local/"))
+        self.view.setHtml(body, QUrl("http://mail.judo.local/"))
+        self.actions["archive"].setVisible(self.folder == FOLDERS["Inbox"])
         if s:
             self._star_button(s.starred)
         self._reader_enabled(True)
@@ -664,7 +1008,7 @@ class MailWindow(QMainWindow):
         self.reader.setVisible(on)
         self.placeholder.setVisible(not on)
         if not on:
-            self.current = None
+            self.current, self.current_summary = None, None
             self.view.setHtml("")
 
     def _save_attachment(self, index: int) -> None:
@@ -677,7 +1021,22 @@ class MailWindow(QMainWindow):
         self.worker.run(lambda mb: mb.save_attachment(mail, index, folder),
                         lambda r: self._failed(r) or self.statusBar().showMessage(f"Saved {r}", 8000))
 
-    # actions
+    def _unsubscribe(self) -> None:
+        s = self.current_summary
+        if not (s and s.unsubscribe):
+            return
+        if QMessageBox.question(self, "Unsubscribe", f"Unsubscribe from {s.sender}?") != QMessageBox.StandardButton.Yes:
+            return
+        if s.unsubscribe.lower().startswith("mailto:"):
+            u = urlparse(s.unsubscribe)
+            q = parse_qs(u.query)
+            Compose(self, self.worker, to=unquote(u.path), subject=q.get("subject", ["unsubscribe"])[0],
+                    body=q.get("body", ["unsubscribe"])[0], title="Unsubscribe").exec()
+        else:
+            ThreadPoolExecutor(1).submit(_open_link, s.unsubscribe)
+            self.statusBar().showMessage("Opened the unsubscribe page in JUDO Browser", 6000)
+
+    # ── actions on the open message ────────────────────────────────────────
     def _quote(self, m: Mail) -> str:
         text = m.text or _plain(m.html)
         return f"\n\nOn {m.date}, {m.sender} wrote:\n" + "\n".join("> " + l for l in text.splitlines())
@@ -698,9 +1057,9 @@ class MailWindow(QMainWindow):
                     body=f"\n\n---------- Forwarded message ----------\nFrom: {m.sender}\nDate: {m.date}\n"
                          f"Subject: {m.subject}\nTo: {m.to}\n\n{m.text or _plain(m.html)}").exec()
 
-    def _selected(self):
-        row = self.list.currentIndex().row()
-        return (row, self.rows[row]) if self.current and 0 <= row < len(self.rows) else (None, None)
+    def _act_current(self, op: str) -> None:
+        if self.current and (op != "archive" or self.folder == FOLDERS["Inbox"]):
+            self._bulk(op, [self.current.uid])
 
     def _star_button(self, on: bool) -> None:
         b = self.actions["star"]
@@ -708,8 +1067,8 @@ class MailWindow(QMainWindow):
         b.setToolTip("Unstar" if on else "Star")
 
     def _star(self) -> None:
-        row, _ = self._selected()
-        if row is not None:
+        row = self.list.currentIndex().row()
+        if self.current and 0 <= row < len(self.rows):
             self._star_row(row)
 
     def _star_row(self, row: int) -> None:
@@ -726,36 +1085,110 @@ class MailWindow(QMainWindow):
             self._star_button(on)
         self.statusBar().showMessage("Starred" if on else "Unstarred", 3000)
 
-    def _unread(self) -> None:
-        row, s = self._selected()
-        if s is None:
+    # ── account menu ───────────────────────────────────────────────────────
+    def _account_menu(self) -> None:
+        t, me = self.t, self.address
+        menu = QMenu(self)
+        card = QWidget(objectName="AccountCard")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(26, 18, 26, 14)
+        cl.setSpacing(6)
+        big = Avatar(72, clickable=True)
+        big.set(me or "?", me, look.photo_path(me))
+        big.setToolTip("Change profile photo")
+        big.clicked.connect(lambda: (menu.close(), self._change_photo()))
+        first = (me.split("@")[0] if me else "there").replace(".", " ").split()[0].title()
+        hi = QLabel(f"Hi, {html.escape(first)}!", objectName="Title", alignment=Qt.AlignmentFlag.AlignCenter)
+        mail = QLabel(html.escape(me or "No account"), objectName="Sub", alignment=Qt.AlignmentFlag.AlignCenter)
+        cl.addWidget(big, 0, Qt.AlignmentFlag.AlignHCenter)
+        cl.addWidget(hi)
+        cl.addWidget(mail)
+        head = QWidgetAction(menu)
+        head.setDefaultWidget(card)
+        menu.addAction(head)
+        menu.addSeparator()
+        menu.addAction(look.icon("camera", t["sub"], 18), "Change profile photo…", self._change_photo)
+        if me and look.photo_path(me).exists():
+            menu.addAction(look.icon("close", t["sub"], 18), "Remove profile photo", self._remove_photo)
+        menu.addAction(look.icon("manage", t["sub"], 18), "Manage your Google Account",
+                       lambda: ThreadPoolExecutor(1).submit(_open_link, "https://myaccount.google.com/"))
+        others = [a for a in mbx.accounts() if a != me]
+        if others:
+            menu.addSection("Switch account")
+            for a in others:
+                menu.addAction(look.icon("manage", t["sub"], 18), a, lambda a=a: self._switch(a))
+        menu.addSeparator()
+        menu.addAction(look.icon("person_add", t["sub"], 18), "Add another account…", self._add_account)
+        theme = menu.addMenu(look.icon("theme", t["sub"], 18), "Theme")
+        current = look.load_settings().get("theme", "system")
+        for key, label in (("system", "Device (Windows)"), ("light", "Light"), ("dark", "Dark")):
+            a = theme.addAction(("✓   " if key == current else "      ") + label)
+            a.triggered.connect(lambda _, k=key: self._set_theme(k))
+        menu.addSeparator()
+        if me:
+            menu.addAction(look.icon("logout", t["sub"], 18), "Sign out of this account", self._sign_out)
+        menu.exec(self.me.mapToGlobal(QPoint(self.me.width() - menu.sizeHint().width(), self.me.height() + 6)))
+
+    def _change_photo(self) -> None:
+        if not self.address:
             return
-        folder = self.folder
-        self.worker.run(lambda mb: mb.mark_read(folder, s.uid, False),
-                        lambda r: self._failed(r) or self._marked_unread(row))
-
-    def _marked_unread(self, row: int) -> None:
-        self.rows[row].unread = True
-        self._refresh_row(row)
-        if self.folder == FOLDERS["Inbox"]:
-            self.folder_delegate.counts["Inbox"] = self.folder_delegate.counts.get("Inbox", 0) + 1
-            self.folders.viewport().update()
-        self.statusBar().showMessage("Marked as unread", 3000)
-
-    def _delete(self) -> None:
-        row, s = self._selected()
-        if s is None:
+        path, _ = QFileDialog.getOpenFileName(self, "Choose a profile photo", str(Path.home() / "Pictures"),
+                                              "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)")
+        if not path:
             return
-        folder = self.folder
-        self.worker.run(lambda mb: mb.trash(folder, s.uid), lambda r: self._failed(r) or self._removed(row, s))
+        img = QImage(path)
+        if img.isNull():
+            QMessageBox.warning(self, "Profile photo", "That file isn't a picture JUDO Mail can read.")
+            return
+        side = min(img.width(), img.height())
+        img = img.copy((img.width() - side) // 2, (img.height() - side) // 2, side, side).scaled(
+            256, 256, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        dest = look.photo_path(self.address)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        img.save(str(dest), "PNG")
+        self.me.set(self.address, self.address, dest)
+        self.statusBar().showMessage("Profile photo updated (kept on this PC)", 5000)
 
-    def _removed(self, row: int, s) -> None:
-        self.model.removeRow(row)
-        self.rows.pop(row)
-        self.uids.remove(s.uid)
-        self._reader_enabled(False)
-        self.statusBar().showMessage("Conversation moved to Trash", 5000)
-        self._status()
+    def _remove_photo(self) -> None:
+        look.photo_path(self.address).unlink(missing_ok=True)
+        self.me.set(self.address, self.address, None)
+
+    def _add_account(self) -> None:
+        if AccountDialog(self).exec():
+            self.reopen(new_worker=True)
+
+    def _switch(self, address: str) -> None:
+        try:
+            mbx.switch_account(address)
+        except Exception as e:
+            self._failed(e)
+            return
+        self.reopen(new_worker=True)
+
+    def _sign_out(self) -> None:
+        if QMessageBox.question(self, "Sign out", f"Sign out of {self.address} in JUDO Mail?\n\n"
+                                "Its App Password is removed from this PC. Your Gmail is not affected.") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        if mbx.remove_account(self.address) or AccountDialog(self, first=True).exec():
+            self.reopen(new_worker=True)
+        else:
+            self.close()
+
+    def _set_theme(self, key: str) -> None:
+        s = look.load_settings()
+        s["theme"] = key
+        look.save_settings(s)
+        self.reopen(new_worker=False)
+
+    def reopen(self, new_worker: bool) -> None:
+        """A fresh window — for a new theme (same connection) or another account (new connection)."""
+        w = MailWindow(None if new_worker else self.worker)
+        w.setGeometry(self.geometry())
+        w.showMaximized() if self.isMaximized() else w.show()
+        _windows.append(w)
+        self._keep_worker = not new_worker
+        self.close()
 
     def _failed(self, result) -> bool:
         if isinstance(result, Exception):
@@ -765,7 +1198,10 @@ class MailWindow(QMainWindow):
         return False
 
     def closeEvent(self, e) -> None:
-        self.worker.shutdown()
+        if not self._keep_worker:
+            self.worker.shutdown()
+        if self in _windows:
+            _windows.remove(self)
         super().closeEvent(e)
 
 
@@ -778,10 +1214,9 @@ def main() -> int:
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
     app.setWindowIcon(look.app_icon())
-    try:
-        w = MailWindow()
-    except Exception as e:
-        QMessageBox.critical(None, "JUDO Mail", str(e))
-        return 1
+    if not mbx.accounts() and not AccountDialog(first=True).exec():
+        return 0
+    w = MailWindow()
+    _windows.append(w)
     w.show()
     return app.exec()

@@ -120,7 +120,7 @@ def test_list_dates_avatars_and_initials():
     assert look.initial("To: priya") == "P" and look.initial("  ") == "?"
 
 
-def test_window_lists_opens_stars_and_deletes_with_a_fake_mailbox():
+def test_window_tabs_bulk_actions_and_reading_with_a_fake_mailbox():
     pytest.importorskip("PyQt6.QtWebEngineWidgets")
     from datetime import datetime, timezone
     from PyQt6.QtCore import QCoreApplication
@@ -128,33 +128,77 @@ def test_window_lists_opens_stars_and_deletes_with_a_fake_mailbox():
     app = QApplication.instance() or QApplication(["x", "-platform", "offscreen"])
     from judo_mail import app as ma
     rows = [mb.Summary(str(i), f"Sender {i}", f"Subject {i}", "", i == 1, False,
-                       datetime(2026, 10, 3, 9, i, tzinfo=timezone.utc), f"s{i}@x.com") for i in (1, 2, 3)]
+                       datetime(2026, 10, 3, 9, i, tzinfo=timezone.utc), f"s{i}@x.com", f"preview {i}", i == 2,
+                       "https://x.com/unsub" if i == 1 else "") for i in (1, 2, 3)]
     calls = []
 
     class FakeMB:
-        def uids(self, folder, query=""): return [r.uid for r in rows]
+        def uids(self, folder, query=""): calls.append(("uids", folder, query)); return [r.uid for r in rows]
         def summaries(self, folder, uids): return [r for r in rows if r.uid in uids]
         def unseen(self, folder="INBOX"): return 1
+        def category_new(self): return {"primary": 2, "promotions": 5, "social": 0, "updates": 0}
+        def labels(self): return ["Unsubscribe", "Work"]
         def get(self, folder, uid):
             m = mb.Mail(uid, f"Sender {uid} <s{uid}@x.com>", "me@x.com", "", f"Subject {uid}", "", "<id>")
             m.text = "hello"
             return m
-        def mark_read(self, folder, uid, read=True): calls.append(("read", uid, read))
+        def mark_read(self, folder, uid, read=True): calls.append(("read" if read else "unread", uid))
         def star(self, folder, uid, on=True): calls.append(("star", uid, on))
         def trash(self, folder, uid): calls.append(("trash", uid))
+        def archive(self, folder, uid): calls.append(("archive", uid))
 
     class FakeWorker:                                    # runs synchronously: no threads in the test
         def run(self, fn, cb=lambda r: None): cb(fn(FakeMB()))
         def shutdown(self): pass
 
     w = ma.MailWindow(FakeWorker(), "me@x.com")
+    assert ("uids", "INBOX", "category:primary") in calls                     # Inbox opens on the Primary tab
+    assert "5 new" in w.tabs["promotions"].text() and w.tab_bar.isVisibleTo(w)
+    names = [w.folders.item(i).text() for i in range(w.folders.count())]
+    assert "Purchases" in names and names[-3:] == ["Labels", "Unsubscribe", "Work"]  # user labels listed
     assert w.model.rowCount() == 3 and w.folder_delegate.counts["Inbox"] == 1 and w.count.text() == "1–3 of 3"
+
+    w._tab("promotions")
+    assert ("uids", "INBOX", "category:promotions") in calls and w.title.text() == "Promotions"
+
     w.list.setCurrentIndex(w.model.index(0, 0))          # opening an unread mail marks it read
     QCoreApplication.processEvents()
-    assert w.current.uid == "1" and ("read", "1", True) in calls and not w.rows[0].unread
-    assert w.folder_delegate.counts["Inbox"] == 0 and w.reader.isVisibleTo(w)
-    w._star_row(1)
-    assert ("star", "2", True) in calls and w.rows[1].starred
-    w._delete()
-    assert ("trash", "1") in calls and w.model.rowCount() == 2 and w.count.text() == "1–2 of 2"
+    assert w.current.uid == "1" and ("read", "1") in calls and not w.rows[0].unread
+    assert w.unsub.isVisibleTo(w)                          # it has a List-Unsubscribe link
+
+    w._check_row(1)                                        # tick two rows, then act on both at once
+    w._check_row(2)
+    assert w.selected_label.text() == "2 selected" and w.bulk["archive"].isVisibleTo(w)
+    w._bulk("unread")
+    assert ("unread", "2,3") in calls and w.rows[1].unread and not w.checked
+    w._select_all()
+    assert len(w.checked) == 3
+    w._bulk("archive")
+    assert ("archive", "1,2,3") in calls and w.model.rowCount() == 0 and not w.reader.isVisibleTo(w)
     w.close()
+
+
+def test_accounts_add_switch_and_sign_out(tmp_path, monkeypatch):
+    import json
+    cfg = tmp_path / "api_keys.json"
+    cfg.write_text(json.dumps({"gemini_api_key": "keep-me", "gmail_address": "a@gmail.com", "gmail_app_password": "aaaa"}))
+    monkeypatch.setattr(mb, "CONFIG", cfg)
+    mb.add_account("b@gmail.com", "bbbb bbbb")
+    assert mb.accounts() == ["b@gmail.com", "a@gmail.com"] and mb.credentials() == ("b@gmail.com", "bbbbbbbb")
+    mb.switch_account("a@gmail.com")
+    assert mb.credentials() == ("a@gmail.com", "aaaa") and mb.accounts()[0] == "a@gmail.com"
+    assert mb.remove_account("a@gmail.com") == "b@gmail.com" and mb.accounts() == ["b@gmail.com"]
+    assert json.loads(cfg.read_text())["gemini_api_key"] == "keep-me"            # other settings untouched
+    assert mb.remove_account("b@gmail.com") is None and mb.accounts() == []
+
+
+def test_previews_from_partial_bodies():
+    import base64 as b64
+    plain = mb.snippet('text/plain; charset="utf-8"', "quoted-printable", b"Hi Ritesh =E2=80=94 see https://x.com/a now")
+    assert plain == "Hi Ritesh — see now"
+    html_part = b64.b64encode(b"<style>p{color:red}</style><p>Your order &amp; invoice is ready</p>")[:-3]
+    multi = (b"--B\r\nContent-Type: text/plain\r\n\r\nPlease enable HTML\r\n--B\r\nContent-Type: text/html\r\n"
+             b"Content-Transfer-Encoding: base64\r\n\r\n" + html_part)      # cut off mid-way, like a partial fetch
+    assert mb.snippet('multipart/alternative; boundary="B"', "", multi).startswith("Your order & invoice")
+    assert mb.unsubscribe_target("<mailto:u@x.com?subject=bye>, <https://x.com/u>") == "https://x.com/u"
+    assert mb.unsubscribe_target("<mailto:u@x.com>") == "mailto:u@x.com"

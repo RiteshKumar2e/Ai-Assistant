@@ -31,8 +31,11 @@ PALETTES = {
 
 
 def palette() -> dict:
-    dark = QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
-    return PALETTES["dark" if dark else "light"]
+    """Light, dark, or "system" (Windows' own setting) — chosen in the account menu."""
+    mode = load_settings().get("theme", "system")
+    if mode not in PALETTES:
+        mode = "dark" if QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark else "light"
+    return PALETTES[mode]
 
 
 ICONS = {   # Material Design paths, 24×24
@@ -68,7 +71,57 @@ ICONS = {   # Material Design paths, 24×24
             "00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
     "download": "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z",
     "back": "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z",
+    "archive": "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 "
+               "6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 "
+               "17.5zM5.12 5l.81-1h12l.94 1H5.12z",
+    "label": "M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 "
+             "1.63-.84L22 12l-4.37-6.16z",
+    "tag": "M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58"
+           ".55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 "
+           "4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z",
+    "people": "M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3"
+              "S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 "
+              "0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z",
+    "info": "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z",
+    "bag": "M18 6h-2c0-2.21-1.79-4-4-4S8 3.79 8 6H6c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6"
+           "-2c1.1 0 2 .9 2 2h-4c0-1.1.9-2 2-2zm6 16H6V8h2v2c0 .55.45 1 1 1s1-.45 1-1V8h4v2c0 .55.45 1 1 1s1-.45 1-1V8"
+           "h2v12z",
+    "drafts_read": "M21.99 8c0-.72-.37-1.35-.94-1.7L12 1 2.95 6.3C2.38 6.65 2 7.28 2 8v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2"
+                   "l-.01-10zM12 13L3.74 7.84 12 3l8.26 4.84L12 13z",
+    "camera": "M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4zM9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9"
+              " 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z",
+    "person_add": "M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 "
+                  "0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z",
+    "logout": "M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4"
+              "V5z",
+    "manage": "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 4c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12"
+              " 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm0 14c-2.03 0-4.43-.82-6.14-2.88a9.947 9.947 0 0112.28 0C16.43 19.18 "
+              "14.03 20 12 20z",
+    "theme": "M12 3a9 9 0 109 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 01-4.4 2.26 5.403 5.403 0 01-3.14-9.8c-.44-.06-.9-.1"
+             "-1.36-.1z",
 }
+
+SETTINGS_DIR = __import__("pathlib").Path.home() / ".judo" / "mail"
+
+
+def photo_path(address: str):
+    """Where a profile picture chosen for this account lives (local only)."""
+    safe = "".join(c if c.isalnum() or c in "@._-" else "_" for c in (address or "account").lower())
+    return SETTINGS_DIR / "photos" / f"{safe}.png"
+
+
+def load_settings() -> dict:
+    import json
+    try:
+        return json.loads((SETTINGS_DIR / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(values: dict) -> None:
+    import json
+    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    (SETTINGS_DIR / "settings.json").write_text(json.dumps(values, indent=1), encoding="utf-8")
 
 
 @lru_cache(maxsize=256)
@@ -198,4 +251,21 @@ def stylesheet(t: dict) -> str:
     QMenu {{ background: {t['card']}; border: 1px solid {t['line']}; border-radius: 8px; padding: 6px 0; }}
     QMenu::item {{ padding: 7px 26px; }}
     QMenu::item:selected {{ background: {t['hover']}; }}
+    QMenu::separator {{ height: 1px; background: {t['line']}; margin: 6px 0; }}
+    QMenu::indicator {{ width: 0; }}
+    #Tab {{ border: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 12px 18px 10px 14px;
+           background: transparent; color: {t['sub']}; font-weight: 600; text-align: left; }}
+    #Tab:hover {{ background: {t['hover']}; }}
+    #Tab[on="true"] {{ color: {t['accent']}; border-bottom: 3px solid {t['accent']}; }}
+    #Toolbar QCheckBox::indicator {{ width: 16px; height: 16px; border: 2px solid {t['faint']}; border-radius: 4px; }}
+    #Toolbar QCheckBox::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']}; }}
+    #Toolbar QCheckBox::indicator:indeterminate {{ background: {t['faint']}; border-color: {t['faint']}; }}
+    #Selected {{ color: {t['accent']}; font-weight: 600; }}
+    #Unsub {{ border: 1px solid {t['line']}; border-radius: 10px; padding: 2px 10px; background: {t['chip']};
+             color: {t['sub']}; font-size: 9pt; }}
+    #Unsub:hover {{ color: {t['accent']}; border-color: {t['accent']}; }}
+    #Hint {{ color: {t['sub']}; font-size: 9pt; }}
+    #Link {{ border: none; background: transparent; color: {t['accent']}; text-align: left; padding: 0; }}
+    #Link:hover {{ text-decoration: underline; }}
+    #AccountCard {{ background: {t['card']}; }}
     """

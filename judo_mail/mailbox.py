@@ -2,7 +2,8 @@
 judo_mail/mailbox.py — Gmail over IMAP (read) and SMTP (send), no UI.
 
 Credentials come from config/api_keys.json: "gmail_address" and
-"gmail_app_password" (a Google App Password, not the account password).
+"gmail_app_password" (a Google App Password, not the account password) are
+the account in use; "gmail_accounts" remembers the others for switching.
 Listing never marks anything read (BODY.PEEK); only mark_read() does, which
 the app calls when a message is opened — Gmail's own behaviour.
 
@@ -10,9 +11,12 @@ Not thread-safe (imaplib isn't): use one Mailbox from one thread at a time.
 """
 from __future__ import annotations
 
+import base64
 import email
+import html as _html
 import imaplib
 import json
+import quopri
 import mimetypes
 import re
 import smtplib
@@ -27,15 +31,147 @@ CONFIG = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
 FOLDERS = {"Inbox": "INBOX", "Starred": "[Gmail]/Starred", "Important": "[Gmail]/Important",
            "Sent": "[Gmail]/Sent Mail", "Drafts": "[Gmail]/Drafts", "All Mail": "[Gmail]/All Mail",
            "Spam": "[Gmail]/Spam", "Trash": "[Gmail]/Trash"}
-_HEADER_FIELDS = "(FROM TO CC SUBJECT DATE MESSAGE-ID)"
+_HEADER_FIELDS = "(FROM TO CC SUBJECT DATE MESSAGE-ID LIST-UNSUBSCRIBE CONTENT-TYPE CONTENT-TRANSFER-ENCODING)"
+SNIPPET_BYTES = 6000          # enough of each body for a one-line preview
+CATEGORIES = ("primary", "promotions", "social", "updates")
+
+
+def _config() -> dict:
+    try:
+        return json.loads(CONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_config(cfg: dict) -> None:
+    CONFIG.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def credentials() -> tuple[str, str]:
-    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+    cfg = _config()
     user, pw = cfg.get("gmail_address", "").strip(), cfg.get("gmail_app_password", "").replace(" ", "")
     if not user or not pw:
         raise RuntimeError("Add gmail_address and gmail_app_password to config/api_keys.json")
     return user, pw
+
+
+# ── accounts: switch between Gmail accounts like Gmail's own profile menu ──
+
+def accounts() -> list[str]:
+    """Every saved address, the one in use first."""
+    cfg = _config()
+    cur = cfg.get("gmail_address", "").strip()
+    others = [a["address"] for a in cfg.get("gmail_accounts", []) if a.get("address") and a["address"] != cur]
+    return ([cur] if cur else []) + others
+
+
+def check_login(address: str, app_password: str) -> None:
+    """Raises with Gmail's reason when the address / App Password don't work."""
+    m = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=30)
+    try:
+        m.login(address.strip(), app_password.replace(" ", ""))
+    finally:
+        try:
+            m.logout()
+        except Exception:
+            pass
+
+
+def add_account(address: str, app_password: str) -> None:
+    """Save an account (after check_login) and make it the one in use."""
+    cfg = _config()
+    address, app_password = address.strip(), app_password.replace(" ", "")
+    saved = [a for a in cfg.get("gmail_accounts", []) if a.get("address") != address]
+    cur = cfg.get("gmail_address", "").strip()
+    if cur and cur != address and not any(a["address"] == cur for a in saved):
+        saved.append({"address": cur, "app_password": cfg.get("gmail_app_password", "")})
+    saved.append({"address": address, "app_password": app_password})
+    cfg.update(gmail_accounts=saved, gmail_address=address, gmail_app_password=app_password)
+    _save_config(cfg)
+
+
+def switch_account(address: str) -> None:
+    cfg = _config()
+    found = next((a for a in cfg.get("gmail_accounts", []) if a.get("address") == address), None)
+    if not found:
+        raise RuntimeError(f"{address} is not saved in JUDO Mail")
+    add_account(found["address"], found["app_password"])
+
+
+def remove_account(address: str) -> str | None:
+    """Forget an account; returns the address now in use (another saved one), or None."""
+    cfg = _config()
+    saved = [a for a in cfg.get("gmail_accounts", []) if a.get("address") != address]
+    cfg["gmail_accounts"] = saved
+    if cfg.get("gmail_address", "").strip() == address:
+        nxt = saved[0] if saved else {"address": "", "app_password": ""}
+        cfg["gmail_address"], cfg["gmail_app_password"] = nxt["address"], nxt["app_password"]
+    _save_config(cfg)
+    return cfg.get("gmail_address") or None
+
+
+# ── previews ────────────────────────────────────────────────────────────────
+
+def _decode(payload: bytes, encoding: str, charset: str) -> str:
+    enc = (encoding or "").strip().lower()
+    try:
+        if enc == "base64":
+            data = re.sub(rb"[^A-Za-z0-9+/=]", b"", payload)
+            data = base64.b64decode(data[:len(data) - len(data) % 4] or b"", validate=False)
+        elif enc == "quoted-printable":
+            data = quopri.decodestring(payload)
+        else:
+            data = payload
+        return data.decode(charset or "utf-8", errors="replace")
+    except (LookupError, ValueError):
+        return payload.decode("utf-8", errors="replace")
+
+
+def _strip_html(text: str) -> str:
+    text = re.sub(r"(?is)<(style|script|head|title)\b.*?(</\1>|$)", " ", text)
+    text = re.sub(r"(?s)<!--.*?(-->|$)", " ", text)
+    return _html.unescape(re.sub(r"<[^>]*>?", " ", text))
+
+
+def snippet(content_type: str, encoding: str, body: bytes, depth: int = 0) -> str:
+    """A one-line preview from the first few KB of a body (it may be cut off mid-part),
+    preferring the plain-text part, like Gmail's list does."""
+    msg = email.message_from_string(f"Content-Type: {content_type or 'text/plain'}\n\n")
+    ctype = msg.get_content_type()
+    if ctype.startswith("multipart/") and depth < 3:
+        boundary = msg.get_param("boundary")
+        if not boundary:
+            return ""
+        found = {}
+        for chunk in body.split(b"--" + boundary.encode())[1:]:
+            head, _, part_body = chunk.lstrip(b"\r\n").partition(b"\r\n\r\n")
+            if not part_body:
+                head, _, part_body = chunk.lstrip(b"\n").partition(b"\n\n")
+            h = email.message_from_bytes(head + b"\r\n\r\n")
+            text = snippet(h.get("Content-Type", "text/plain"), h.get("Content-Transfer-Encoding", ""),
+                           part_body, depth + 1)
+            if text:
+                kind = "plain" if h.get_content_type() == "text/plain" else "other"
+                found.setdefault(kind, text)
+                if kind == "plain" and len(text) >= 30:
+                    break
+        plain, other = found.get("plain", ""), found.get("other", "")
+        # a stub like "Please enable HTML" is no preview — the HTML part says more
+        return plain if len(plain) >= 30 or not other else other
+    if ctype not in ("text/plain", "text/html"):
+        return ""
+    text = _decode(body, encoding, msg.get_param("charset") or "utf-8")
+    if ctype == "text/html":
+        text = _strip_html(text)
+    text = re.sub(r"[\[(<]?https?://\S+[\])>]?", " ", text)         # links read as noise in a preview
+    text = re.sub(r"\s+", " ", text.replace("\u200c", "").replace("\xa0", " ")).strip(" :-|\u00b7")
+    return text[:240]
+
+
+def unsubscribe_target(value: str) -> str:
+    """List-Unsubscribe header -> a web link (preferred) or a mailto: address."""
+    links = re.findall(r"<([^>]+)>", value or "")
+    return next((l for l in links if l.lower().startswith("http")), next(iter(links), ""))
 
 
 def _text(value) -> str:
@@ -61,6 +197,9 @@ class Summary:
     starred: bool
     when: datetime | None = None     # the Date header, for "3:45 PM" / "12 Oct" in the list
     address: str = ""                # the sender's (or, in Sent, recipient's) e-mail address
+    snippet: str = ""                # first words of the body, shown after the subject
+    attachment: bool = False         # has a file attached (Gmail's has:attachment)
+    unsubscribe: str = ""            # List-Unsubscribe link or mailto: — the "Unsubscribe" button
 
 
 @dataclass
@@ -129,16 +268,32 @@ class Mailbox:
         if not uids:
             return []
         m = self._conn(folder)
-        typ, data = m.uid("FETCH", ",".join(uids), f"(UID FLAGS BODY.PEEK[HEADER.FIELDS {_HEADER_FIELDS}])")
-        found: dict[str, Summary] = {}
+        typ, data = m.uid("FETCH", ",".join(uids),
+                          f"(UID FLAGS BODY.PEEK[HEADER.FIELDS {_HEADER_FIELDS}] BODY.PEEK[TEXT]<0.{SNIPPET_BYTES}>)")
+        try:   # one search tells which of these have files attached
+            typ_a, att = m.uid("SEARCH", "UID", ",".join(uids), "X-GM-RAW", '"has:attachment"')
+            with_files = set(att[0].decode().split()) if typ_a == "OK" and att and att[0] else set()
+        except imaplib.IMAP4.error:
+            with_files = set()
+        heads: dict[str, tuple[str, bytes]] = {}
+        bodies: dict[str, bytes] = {}
+        uid = None
         for part in data:
             if not isinstance(part, tuple):
                 continue
             meta = part[0].decode(errors="replace")
-            uid = re.search(r"UID (\d+)", meta).group(1)
-            flags = re.search(r"FLAGS \(([^)]*)\)", meta)
-            flags = flags.group(1) if flags else ""
-            h = email.message_from_bytes(part[1])
+            m_uid = re.search(r"UID (\d+)", meta)
+            uid = m_uid.group(1) if m_uid else uid
+            if uid is None:
+                continue
+            if "HEADER.FIELDS" in meta:
+                flags = re.search(r"FLAGS \(([^)]*)\)", meta)
+                heads[uid] = (flags.group(1) if flags else "", part[1])
+            if "BODY[TEXT]" in meta:
+                bodies[uid] = part[1]
+        found: dict[str, Summary] = {}
+        for uid, (flags, head) in heads.items():
+            h = email.message_from_bytes(head)
             try:
                 when = parsedate_to_datetime(h["Date"])
                 date = when.strftime("%d %b %Y, %H:%M")
@@ -146,9 +301,15 @@ class Mailbox:
                 when, date = None, _text(h["Date"])
             sent = folder == FOLDERS["Sent"]
             who = _text(h["To"] if sent else h["From"])
+            try:
+                preview = snippet(h.get("Content-Type", "text/plain"), h.get("Content-Transfer-Encoding", ""),
+                                  bodies.get(uid, b""))
+            except Exception:
+                preview = ""
             found[uid] = Summary(uid, ("To: " if sent else "") + _who(who), _text(h["Subject"]) or "(no subject)", date,
                                  "\\Seen" not in flags, "\\Flagged" in flags, when,
-                                 next((a for _, a in getaddresses([who]) if a), ""))
+                                 next((a for _, a in getaddresses([who]) if a), ""), preview, uid in with_files,
+                                 unsubscribe_target(_text(h["List-Unsubscribe"])))
         return [found[u] for u in uids if u in found]
 
     def get(self, folder: str, uid: str) -> Mail:
@@ -175,6 +336,29 @@ class Mailbox:
                 mail.text = body
         return mail
 
+    def labels(self) -> list[str]:
+        """The user's own Gmail labels (not Inbox or Gmail's system folders)."""
+        typ, data = self._conn("INBOX").list()
+        out = []
+        for line in data or []:
+            text = line.decode(errors="replace") if isinstance(line, bytes) else str(line)
+            m = re.match(r'\((?P<flags>[^)]*)\) "(?P<sep>[^"]*)" "?(?P<name>.*?)"?$', text)
+            if not m or "\\Noselect" in m["flags"]:
+                continue
+            name = m["name"]
+            if name.upper() != "INBOX" and not name.startswith("[Gmail]"):
+                out.append(name)
+        return sorted(out, key=str.lower)
+
+    def category_new(self) -> dict[str, int]:
+        """"N new" per Inbox tab (Primary / Promotions / Social / Updates): unread from the last day."""
+        m = self._conn("INBOX")
+        out = {}
+        for c in CATEGORIES:
+            typ, data = m.uid("SEARCH", "CHARSET", "UTF-8", "X-GM-RAW", f'"category:{c} is:unread newer_than:1d"')
+            out[c] = len(data[0].split()) if typ == "OK" and data and data[0] else 0
+        return out
+
     def unseen(self, folder: str = "INBOX") -> int:
         """Unread messages in a folder — the badge next to Inbox."""
         typ, data = self._conn(folder).status(f'"{folder}"', "(UNSEEN)")
@@ -200,6 +384,10 @@ class Mailbox:
 
     def star(self, folder: str, uid: str, on: bool = True) -> None:
         self._conn(folder).uid("STORE", uid, "+FLAGS" if on else "-FLAGS", "(\\Flagged)")
+
+    def archive(self, folder: str, uid: str) -> None:
+        """Gmail's Archive: take it out of the Inbox (it stays in All Mail)."""
+        self._conn(folder).uid("STORE", uid, "-X-GM-LABELS", "(\\Inbox)")
 
     def trash(self, folder: str, uid: str) -> None:
         """Gmail's Delete: move to Trash (recoverable for 30 days)."""
