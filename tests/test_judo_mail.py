@@ -406,3 +406,19 @@ def test_gmail_layout_full_page_mail_and_collapsible_menu(tmp_path, monkeypatch)
     w._toggle_menu()
     assert not w.folder_delegate.compact and w.compose_btn.text().strip() == "Compose"
     w.close()
+
+
+def test_list_times_are_local_and_rows_are_one_line():
+    from datetime import datetime, timezone, timedelta
+    from judo_mail import look, mailbox as mb
+    meta = (r'1 (UID 5 FLAGS (\Seen) INTERNALDATE "03-Oct-2026 04:05:12 +0000" '
+            r'X-GM-LABELS ("\\Inbox" "Unsubscribe" \Important "My \"Work\"") BODY[HEADER.FIELDS (FROM)] {10}')
+    when = mb._received(meta)
+    assert when.utcoffset() == datetime.now().astimezone().utcoffset()          # this PC's time zone
+    assert when.astimezone(timezone.utc) == datetime(2026, 10, 3, 4, 5, 12, tzinfo=timezone.utc)
+    assert mb._gm_labels(meta) == ("Unsubscribe", 'My "Work"')                  # system labels left out
+    assert mb._line("Ritesh, these projects might interest\r\n you") == "Ritesh, these projects might interest you"
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now = datetime(2026, 10, 3, 12, 0, tzinfo=ist)
+    pdt = timezone(timedelta(hours=-7))                                          # sent from California at 8:18 PM ...
+    assert look.when_text(datetime(2026, 10, 2, 20, 18, tzinfo=pdt), now=now) == "8:48 AM"   # ... is 8:48 AM in India

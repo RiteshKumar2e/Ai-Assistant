@@ -213,8 +213,14 @@ def when_text(when: datetime | None, fallback: str = "", now: datetime | None = 
     """The list's date column: "3:45 PM" today, "12 Oct" this year, "12/10/24" before that."""
     if when is None:
         return fallback
-    now = now or datetime.now(when.tzinfo)
-    local = when.astimezone(now.tzinfo) if when.tzinfo else when
+    now = now or datetime.now().astimezone()          # this PC's clock and time zone
+    if when.tzinfo and now.tzinfo:
+        local = when.astimezone(now.tzinfo)
+    elif when.tzinfo:
+        local, now = when.astimezone(), now.astimezone()
+    else:
+        local = when
+        now = now.replace(tzinfo=None)
     if local.date() == now.date():
         return local.strftime("%I:%M %p").lstrip("0")
     if local.year == now.year:

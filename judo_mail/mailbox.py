@@ -23,7 +23,7 @@ import smtplib
 from dataclasses import dataclass, field
 from email.header import decode_header, make_header
 from email.message import EmailMessage, Message
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 
@@ -181,6 +181,42 @@ def _text(value) -> str:
         return str(value or "").strip()
 
 
+def _line(value: str) -> str:
+    """Headers can be folded over several lines ("…might interest\r\n you"); a list row is one line."""
+    return " ".join((value or "").split())
+
+
+def _local(when: datetime) -> datetime:
+    """Any sender's time zone → this PC's, like Gmail shows it."""
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone()
+
+
+def _received(meta: str) -> datetime | None:
+    """INTERNALDATE — when Gmail received the mail, which is the time Gmail's list shows."""
+    m = re.search(r'INTERNALDATE "([^"]+)"', meta)
+    if not m:
+        return None
+    try:
+        return _local(datetime.strptime(m.group(1), "%d-%b-%Y %H:%M:%S %z"))
+    except ValueError:
+        return None
+
+
+def _gm_labels(meta: str) -> tuple:
+    """X-GM-LABELS ("\\Inbox" "Unsubscribe" \\Important) → the user's own labels only."""
+    m = re.search(r"X-GM-LABELS \(((?:[^()\"]|\"(?:[^\"\\]|\\.)*\")*)\)", meta)
+    if not m:
+        return ()
+    out = []
+    for quoted, bare in re.findall(r'"((?:[^"\\]|\\.)*)"|(\S+)', m.group(1)):
+        name = (quoted.replace('\\"', '"').replace("\\\\", "\\") if quoted else bare)
+        if name and not name.startswith("\\"):
+            out.append(name)
+    return tuple(out)
+
+
 def _who(value: str) -> str:
     """'"Rahul Kumar" <rahul@x.com>' -> 'Rahul Kumar' (or the address)."""
     pairs = getaddresses([value or ""])
@@ -200,6 +236,7 @@ class Summary:
     snippet: str = ""                # first words of the body, shown after the subject
     attachment: bool = False         # has a file attached (Gmail's has:attachment)
     unsubscribe: str = ""            # List-Unsubscribe link or mailto: — the "Unsubscribe" button
+    labels: tuple = ()               # the user's own Gmail labels on it ("Unsubscribe", "Work"…)
 
 
 @dataclass
@@ -269,13 +306,16 @@ class Mailbox:
             return []
         m = self._conn(folder)
         typ, data = m.uid("FETCH", ",".join(uids),
-                          f"(UID FLAGS BODY.PEEK[HEADER.FIELDS {_HEADER_FIELDS}] BODY.PEEK[TEXT]<0.{SNIPPET_BYTES}>)")
+                          f"(UID FLAGS INTERNALDATE X-GM-LABELS BODY.PEEK[HEADER.FIELDS {_HEADER_FIELDS}] "
+                          f"BODY.PEEK[TEXT]<0.{SNIPPET_BYTES}>)")
         try:   # one search tells which of these have files attached
             typ_a, att = m.uid("SEARCH", "UID", ",".join(uids), "X-GM-RAW", '"has:attachment"')
             with_files = set(att[0].decode().split()) if typ_a == "OK" and att and att[0] else set()
         except imaplib.IMAP4.error:
             with_files = set()
         heads: dict[str, tuple[str, bytes]] = {}
+        received: dict[str, datetime] = {}
+        labels: dict[str, tuple] = {}
         bodies: dict[str, bytes] = {}
         uid = None
         for part in data:
@@ -286,6 +326,10 @@ class Mailbox:
             uid = m_uid.group(1) if m_uid else uid
             if uid is None:
                 continue
+            if "INTERNALDATE" in meta and _received(meta):
+                received[uid] = _received(meta)
+            if "X-GM-LABELS" in meta:
+                labels[uid] = _gm_labels(meta)
             if "HEADER.FIELDS" in meta:
                 flags = re.search(r"FLAGS \(([^)]*)\)", meta)
                 heads[uid] = (flags.group(1) if flags else "", part[1])
@@ -295,10 +339,10 @@ class Mailbox:
         for uid, (flags, head) in heads.items():
             h = email.message_from_bytes(head)
             try:
-                when = parsedate_to_datetime(h["Date"])
+                when = received.get(uid) or _local(parsedate_to_datetime(h["Date"]))
                 date = when.strftime("%d %b %Y, %H:%M")
             except Exception:
-                when, date = None, _text(h["Date"])
+                when, date = received.get(uid), _text(h["Date"])
             sent = folder == FOLDERS["Sent"]
             who = _text(h["To"] if sent else h["From"])
             try:
@@ -306,10 +350,11 @@ class Mailbox:
                                   bodies.get(uid, b""))
             except Exception:
                 preview = ""
-            found[uid] = Summary(uid, ("To: " if sent else "") + _who(who), _text(h["Subject"]) or "(no subject)", date,
+            found[uid] = Summary(uid, _line(("To: " if sent else "") + _who(who)),
+                                 _line(_text(h["Subject"])) or "(no subject)", date,
                                  "\\Seen" not in flags, "\\Flagged" in flags, when,
-                                 next((a for _, a in getaddresses([who]) if a), ""), preview, uid in with_files,
-                                 unsubscribe_target(_text(h["List-Unsubscribe"])))
+                                 next((a for _, a in getaddresses([who]) if a), ""), _line(preview), uid in with_files,
+                                 unsubscribe_target(_text(h["List-Unsubscribe"])), labels.get(uid, ()))
         return [found[u] for u in uids if u in found]
 
     def get(self, folder: str, uid: str) -> Mail:

@@ -244,9 +244,10 @@ class Avatar(QWidget):
 # ── the message list ────────────────────────────────────────────────────────
 
 class MessageDelegate(QStyledItemDelegate):
-    """Two-line rows: ☐ · avatar · sender · date / subject — preview · 📎 · ☆.
+    """One line per mail, like Gmail's list: ☐ · ☆ · sender · [labels] subject - preview · 📎 · time.
     Unread rows are bold with an accent mark; the checkbox and star are clickable."""
-    ROW = 72
+    ROW = 46
+    SENDER_W = 210
 
     def __init__(self, t: dict, is_checked, on_check, on_star, parent=None):
         super().__init__(parent)
@@ -257,11 +258,11 @@ class MessageDelegate(QStyledItemDelegate):
 
     @staticmethod
     def _check_rect(r: QRect) -> QRect:
-        return QRect(r.left() + 16, r.top() + 27, 18, 18)
+        return QRect(r.left() + 20, r.center().y() - 9, 18, 18)
 
     @staticmethod
     def _star_rect(r: QRect) -> QRect:
-        return QRect(r.right() - 34, r.top() + 38, 22, 22)
+        return QRect(r.left() + 50, r.center().y() - 11, 22, 22)
 
     def paint(self, p: QPainter, option, index):
         s: Summary = index.data(SUMMARY)
@@ -275,11 +276,13 @@ class MessageDelegate(QStyledItemDelegate):
         if bg:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(bg))
-            p.drawRoundedRect(QRectF(r.adjusted(6, 2, -6, -2)), 12, 12)
+            p.drawRoundedRect(QRectF(r.adjusted(6, 1, -6, -1)), 10, 10)
         if s.unread:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(t["accent"]))
-            p.drawRoundedRect(QRectF(r.left() + 7, r.top() + 20, 3, r.height() - 40), 1.5, 1.5)
+            p.drawRoundedRect(QRectF(r.left() + 7, r.top() + 12, 3, r.height() - 24), 1.5, 1.5)
+        p.setPen(QPen(QColor(t["line"]), 1))
+        p.drawLine(r.left() + 14, r.bottom(), r.right() - 14, r.bottom())
 
         cb = QRectF(self._check_rect(r))
         if checked:
@@ -296,40 +299,61 @@ class MessageDelegate(QStyledItemDelegate):
             p.setPen(QPen(QColor(t["faint"] if (hover or selected) else t["line"]), 2))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(cb.adjusted(1, 1, -1, -1), 4, 4)
-        _avatar(p, QRectF(r.left() + 46, r.top() + 16, 40, 40), s.sender, s.address)
-
-        x, right = r.left() + 98, r.right() - 16
-        date = look.when_text(s.when, s.date)
-        p.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold if s.unread else QFont.Weight.Normal))
-        dw = p.fontMetrics().horizontalAdvance(date)
-        p.setPen(QColor(t["accent"] if s.unread else t["sub"]))
-        p.drawText(QRect(right - dw, r.top() + 14, dw, 20), Qt.AlignmentFlag.AlignVCenter, date)
-
-        p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold if s.unread else QFont.Weight.Normal))
-        p.setPen(QColor(t["text"]))
-        w1 = right - dw - 12 - x
-        p.drawText(QRect(x, r.top() + 14, w1, 20), Qt.AlignmentFlag.AlignVCenter,
-                   p.fontMetrics().elidedText(s.sender or "(unknown)", Qt.TextElideMode.ElideRight, w1))
-
-        line2 = r.top() + 39
-        w2 = right - 32 - x - (24 if s.attachment else 0)
-        p.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold if s.unread else QFont.Weight.Normal))
-        subject = p.fontMetrics().elidedText(s.subject, Qt.TextElideMode.ElideRight, int(w2 * 0.72))
-        sw = p.fontMetrics().horizontalAdvance(subject)
-        p.setPen(QColor(t["text"] if s.unread else t["sub"]))
-        p.drawText(QRect(x, line2, sw + 2, 20), Qt.AlignmentFlag.AlignVCenter, subject)
-        if s.snippet and w2 - sw > 40:
-            p.setFont(QFont("Segoe UI", 9))
-            p.setPen(QColor(t["faint"]))
-            rest = p.fontMetrics().elidedText(f"  —  {s.snippet}", Qt.TextElideMode.ElideRight, w2 - sw)
-            p.drawText(QRect(x + sw, line2, w2 - sw, 20), Qt.AlignmentFlag.AlignVCenter, rest)
-        if s.attachment:
-            look.icon("attach", t["sub"], 16).paint(p, QRect(right - 56, line2 + 2, 16, 16))
-
-        star = self._star_rect(r)
         name, color = ("star", t["star"]) if s.starred else ("star_border", t["faint"])
-        if s.starred or hover or selected:
-            look.icon(name, color, 18).paint(p, star)
+        look.icon(name, color, 20).paint(p, self._star_rect(r).adjusted(1, 1, -1, -1))
+
+        bold = QFont.Weight.Bold if s.unread else QFont.Weight.Normal
+        line = QRect(r.left(), r.top(), r.width(), r.height())
+        mid = Qt.AlignmentFlag.AlignVCenter
+
+        # time, right-aligned
+        right = r.right() - 20
+        date = look.when_text(s.when, s.date)
+        p.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold if s.unread else QFont.Weight.Normal))
+        dw = max(64, p.fontMetrics().horizontalAdvance(date))
+        p.setPen(QColor(t["text"] if s.unread else t["sub"]))
+        p.drawText(QRect(right - dw, line.top(), dw, line.height()), mid | Qt.AlignmentFlag.AlignRight, date)
+        right -= dw + 14
+        if s.attachment:
+            look.icon("attach", t["sub"], 18).paint(p, QRect(right - 18, r.center().y() - 9, 18, 18))
+            right -= 30
+
+        # sender column
+        x = r.left() + 88
+        p.setFont(QFont("Segoe UI", 10, bold))
+        p.setPen(QColor(t["text"]))
+        sw = min(self.SENDER_W, max(80, (r.width() - 300) // 5))     # same for every row, so subjects line up
+        p.drawText(QRect(x, line.top(), sw - 12, line.height()), mid,
+                   p.fontMetrics().elidedText(s.sender or "(unknown)", Qt.TextElideMode.ElideRight, sw - 12))
+        x += sw
+
+        # the user's own labels as small chips
+        p.setFont(QFont("Segoe UI", 8))
+        for label in s.labels[:3]:
+            lw = p.fontMetrics().horizontalAdvance(label) + 14
+            if x + lw > right - 120:
+                break
+            chip = QRectF(x, r.center().y() - 10, lw, 20)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(t["chip"]))
+            p.drawRoundedRect(chip, 4, 4)
+            p.setPen(QColor(t["sub"]))
+            p.drawText(chip, Qt.AlignmentFlag.AlignCenter, label)
+            x += lw + 6
+
+        # subject - preview, on one line
+        room = right - x
+        if room > 20:
+            p.setFont(QFont("Segoe UI", 10, bold))
+            p.setPen(QColor(t["text"]))
+            subject = p.fontMetrics().elidedText(s.subject, Qt.TextElideMode.ElideRight, room)
+            used = p.fontMetrics().horizontalAdvance(subject)
+            p.drawText(QRect(x, line.top(), used + 2, line.height()), mid, subject)
+            if s.snippet and room - used > 40:
+                p.setFont(QFont("Segoe UI", 10))
+                p.setPen(QColor(t["sub"]))
+                rest = p.fontMetrics().elidedText(f" - {s.snippet}", Qt.TextElideMode.ElideRight, room - used)
+                p.drawText(QRect(x + used, line.top(), room - used, line.height()), mid, rest)
         p.restore()
 
     def editorEvent(self, event, model, option, index):
