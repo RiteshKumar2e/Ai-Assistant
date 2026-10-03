@@ -137,6 +137,7 @@ def test_window_tabs_bulk_actions_and_reading_with_a_fake_mailbox():
         def summaries(self, folder, uids): return [r for r in rows if r.uid in uids]
         def unseen(self, folder="INBOX"): return 1
         def category_new(self): return {"primary": 2, "promotions": 5, "social": 0, "updates": 0}
+        def display_name(self): return ""
         def labels(self): return ["Unsubscribe", "Work"]
         def get(self, folder, uid):
             m = mb.Mail(uid, f"Sender {uid} <s{uid}@x.com>", "me@x.com", "", f"Subject {uid}", "", "<id>")
@@ -222,6 +223,7 @@ def test_live_sync_adds_new_mail_drops_deleted_and_picks_up_gmail_flags():
         def flags(self, folder, uids): return {u: state["flags"].get(u, (False, False)) for u in uids}
         def unseen(self, folder="INBOX"): return 1
         def category_new(self): return {}
+        def display_name(self): return ""
         def labels(self): return []
         def get(self, folder, uid):
             m = mb.Mail(uid, f"S{uid} <s{uid}@x.com>", "me@x.com", "", f"Subj {uid}", "", "<id>")
@@ -259,3 +261,59 @@ def _app():
 
 
 _APP = None
+
+
+def test_greeting_uses_the_real_name_not_the_address(tmp_path, monkeypatch):
+    from judo_mail import look
+    monkeypatch.setattr(look, "SETTINGS_DIR", tmp_path)
+    assert look.friendly_name("riteshkumar90359@gmail.com") == "Riteshkumar"          # tidy guess: no digits
+    assert look.friendly_name("ritesh.kumar_2@x.com") == "Ritesh Kumar"
+    look.remember_name("RiteshKumar90359@gmail.com", "Ritesh Kumar")                    # what Gmail says
+    assert look.friendly_name("riteshkumar90359@gmail.com") == "Ritesh Kumar"
+
+
+def test_account_card_lists_other_accounts_and_actions(tmp_path, monkeypatch):
+    pytest.importorskip("PyQt6.QtWebEngineWidgets")
+    _app()
+    from PyQt6.QtWidgets import QLabel, QPushButton
+    from judo_mail import app as ma, look
+    monkeypatch.setattr(look, "SETTINGS_DIR", tmp_path)
+    look.remember_name("me@x.com", "Ritesh Kumar")
+    monkeypatch.setattr(ma.mbx, "accounts", lambda: ["me@x.com", "work@x.com"])
+
+    class W:
+        def run(self, fn, cb=lambda r: None): pass
+        def shutdown(self): pass
+    w = ma.MailWindow(W(), "me@x.com")
+    card = ma.AccountPopup(w)
+    labels = [l.text() for l in card.findChildren(QLabel)]
+    buttons = [b.text().strip() for b in card.findChildren(QPushButton)]
+    assert "Hi, Ritesh!" in labels and "me@x.com" in labels and "work@x.com" in labels
+    assert {"Manage your Google Account", "Add another account", "Sign out of this account",
+            "Device", "Light", "Dark"} <= set(buttons)
+    card.close()
+    w.close()
+
+
+def test_avatar_opens_the_account_card_every_time(tmp_path, monkeypatch):
+    pytest.importorskip("PyQt6.QtWebEngineWidgets")
+    _app()
+    from judo_mail import app as ma, look
+    monkeypatch.setattr(look, "SETTINGS_DIR", tmp_path)
+    monkeypatch.setattr(ma.mbx, "accounts", lambda: ["me@x.com"])
+
+    class W:
+        def run(self, fn, cb=lambda r: None): pass
+        def shutdown(self): pass
+    w = ma.MailWindow(W(), "me@x.com")
+    w.show()
+    for _ in range(3):                         # open, close with ✕, open again ...
+        w._account_menu()
+        assert w._popup is not None and w._popup.isVisible()
+        w._popup.close()
+        assert w._popup is None
+        w._popup_closed = 0.0                  # (a later click, not the one that closed it)
+    w._account_menu()
+    w._account_menu()                          # clicking the avatar again closes the card
+    assert w._popup is None
+    w.close()

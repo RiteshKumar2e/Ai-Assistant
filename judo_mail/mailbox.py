@@ -396,6 +396,20 @@ class Mailbox:
                     break
         return changed
 
+    def display_name(self) -> str:
+        """The name this account sends as (From of its latest sent mail) — "Ritesh Kumar",
+        the way Gmail greets you — or "" when nothing has been sent yet."""
+        m = self._conn(FOLDERS["Sent"])
+        typ, data = m.uid("SEARCH", None, "ALL")
+        uids = data[0].split()[-5:] if typ == "OK" and data and data[0] else []
+        for uid in reversed(uids):
+            typ, data = m.uid("FETCH", uid.decode(), "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+            head = next((p[1] for p in data or [] if isinstance(p, tuple)), b"")
+            for disp, addr in getaddresses([_text(email.message_from_bytes(head)["From"])]):
+                if disp and addr.lower() == self.user.lower():
+                    return disp.strip().strip('"')
+        return ""
+
     def find_contacts(self, name: str, limit: int = 5) -> list[tuple[str, str, int]]:
         """People in this Gmail matching a spoken name -> [(display name, address, how often)],
         best first. People the user has written to count double."""

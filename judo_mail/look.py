@@ -110,6 +110,24 @@ def photo_path(address: str):
     return SETTINGS_DIR / "photos" / f"{safe}.png"
 
 
+def friendly_name(address: str) -> str:
+    """The account's own name when Gmail told us (cached by the window), else a tidy
+    guess from the address: riteshkumar90359@gmail.com -> "Riteshkumar"."""
+    known = load_settings().get("names", {}).get((address or "").lower(), "")
+    if known:
+        return known
+    local = (address or "").split("@")[0]
+    words = [w for w in "".join(c if c.isalpha() else " " for c in local).split() if w]
+    return " ".join(w.title() for w in words) or "there"
+
+
+def remember_name(address: str, name: str) -> None:
+    if address and name:
+        s = load_settings()
+        s.setdefault("names", {})[address.lower()] = name
+        save_settings(s)
+
+
 def load_settings() -> dict:
     import json
     try:
@@ -268,4 +286,22 @@ def stylesheet(t: dict) -> str:
     #Link {{ border: none; background: transparent; color: {t['accent']}; text-align: left; padding: 0; }}
     #Link:hover {{ text-decoration: underline; }}
     #AccountCard {{ background: {t['card']}; }}
+    #AcctPopup {{ background: {t['bg']}; border: 1px solid {t['line']}; border-radius: 28px; }}
+    #AcctEmail {{ color: {t['text']}; font-weight: 600; }}
+    #AcctHi {{ font-size: 17pt; color: {t['text']}; }}
+    #AcctManage {{ border: 1px solid {t['faint']}; border-radius: 20px; padding: 9px 22px; background: transparent;
+                  color: {t['accent']}; font-weight: 600; }}
+    #AcctManage:hover {{ background: {t['hover']}; }}
+    #AcctRow {{ border: none; border-radius: 4px; padding: 13px 18px; background: {t['card']}; color: {t['text']};
+               text-align: left; font-size: 10pt; }}
+    #AcctRow:hover {{ background: {t['hover']}; }}
+    #AcctRow[first="true"] {{ border-top-left-radius: 20px; border-top-right-radius: 20px; }}
+    #AcctRow[last="true"] {{ border-bottom-left-radius: 20px; border-bottom-right-radius: 20px; }}
+    #Seg {{ border: 1px solid {t['line']}; border-radius: 16px; padding: 7px 0; background: {t['card']};
+           color: {t['sub']}; font-weight: 600; }}
+    #Seg:hover {{ background: {t['hover']}; }}
+    #Seg:checked {{ background: {t['select']}; color: {t['accent']}; border-color: {t['accent']}; }}
+    #Cam {{ border: 2px solid {t['bg']}; border-radius: 15px; background: {t['card']}; padding: 4px; }}
+    #Cam:hover {{ background: {t['hover']}; }}
+    #Fine {{ color: {t['faint']}; font-size: 8.5pt; }}
     """

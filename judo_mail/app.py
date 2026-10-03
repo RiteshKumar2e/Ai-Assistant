@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -28,9 +29,8 @@ from PyQt6.QtGui import (QColor, QFont, QImage, QKeySequence, QPainter, QPainter
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                             QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton,
-                             QSplitter, QStyle, QStyledItemDelegate, QTextEdit, QToolButton, QVBoxLayout, QWidget,
-                             QWidgetAction)
+                             QListView, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
+                             QSplitter, QStyle, QStyledItemDelegate, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 
 from judo_mail import look
 from judo_mail import mailbox as mbx
@@ -522,6 +522,144 @@ class AccountDialog(QDialog):
         self.accept()
 
 
+class AccountPopup(QFrame):
+    """The account card under the avatar, laid out like Google's: the address, a large
+    photo with a camera badge, "Hi, <name>!", Manage your Google Account, the other
+    accounts with Add / Sign out in one rounded group, and Device / Light / Dark."""
+
+    def __init__(self, win: "MailWindow"):
+        super().__init__(win, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.win, t, me = win, win.t, win.address
+        self.setStyleSheet(look.stylesheet(t))
+        card = QFrame(objectName="AcctPopup")
+        card.setFixedWidth(392)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 12, 14, 14)
+        lay.setSpacing(0)
+
+        top = QHBoxLayout()
+        top.addSpacing(36)
+        email = QLabel(html.escape(me or "No account"), objectName="AcctEmail", alignment=Qt.AlignmentFlag.AlignCenter)
+        top.addWidget(email, 1)
+        top.addWidget(_tool("close", "Close", self.close, t, 18))
+        lay.addLayout(top)
+        lay.addSpacing(14)
+
+        pic = QWidget()
+        pic.setFixedSize(84, 84)
+        big = Avatar(80, pic, clickable=True)
+        big.move(2, 2)
+        big.set(look.friendly_name(me) if me else "?", me, look.photo_path(me))
+        big.setToolTip("Change profile photo")
+        big.clicked.connect(lambda: self._then(win._change_photo))
+        cam = QToolButton(pic, objectName="Cam", toolTip="Change profile photo")
+        cam.setIcon(look.icon("camera", t["text"], 16))
+        cam.setIconSize(QSize(16, 16))
+        cam.setFixedSize(30, 30)
+        cam.move(56, 56)
+        cam.setCursor(Qt.CursorShape.PointingHandCursor)
+        cam.clicked.connect(lambda: self._then(win._change_photo))
+        lay.addWidget(pic, 0, Qt.AlignmentFlag.AlignHCenter)
+        lay.addSpacing(10)
+        first = look.friendly_name(me).split()[0] if me else "there"
+        lay.addWidget(QLabel(f"Hi, {html.escape(first)}!", objectName="AcctHi", alignment=Qt.AlignmentFlag.AlignCenter))
+        lay.addSpacing(12)
+        manage = QPushButton("Manage your Google Account", objectName="AcctManage")
+        manage.setFixedHeight(40)                    # radius 20 needs the full 40 px to come out round
+        manage.setCursor(Qt.CursorShape.PointingHandCursor)
+        manage.clicked.connect(lambda: self._then(
+            lambda: ThreadPoolExecutor(1).submit(_open_link, "https://myaccount.google.com/")))
+        lay.addWidget(manage, 0, Qt.AlignmentFlag.AlignHCenter)
+        lay.addSpacing(18)
+
+        rows = []
+        for a in [x for x in mbx.accounts() if x != me]:
+            rows.append(self._account_row(a))
+        rows.append(self._row("Add another account", win._add_account, "person_add"))
+        if me and look.photo_path(me).exists():
+            rows.append(self._row("Remove profile photo", win._remove_photo, "close"))
+        if me:
+            rows.append(self._row("Sign out of this account", win._sign_out, "logout"))
+        for i, b in enumerate(rows):
+            b.setProperty("first", i == 0)
+            b.setProperty("last", i == len(rows) - 1)
+            lay.addWidget(b)
+            if i < len(rows) - 1:
+                lay.addSpacing(2)
+
+        lay.addSpacing(16)
+        theme_label = QLabel("Theme", objectName="Sub")
+        lay.addWidget(theme_label)
+        lay.addSpacing(6)
+        seg = QHBoxLayout()
+        seg.setSpacing(6)
+        current = look.load_settings().get("theme", "system")
+        for key, label in (("system", "Device"), ("light", "Light"), ("dark", "Dark")):
+            b = QPushButton(label, objectName="Seg", checkable=True)
+            b.setChecked(key == current)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _, k=key: self._then(lambda: win._set_theme(k)))
+            seg.addWidget(b)
+        lay.addLayout(seg)
+        lay.addSpacing(12)
+        lay.addWidget(QLabel("Accounts, photos and App Passwords stay on this PC.", objectName="Fine",
+                             alignment=Qt.AlignmentFlag.AlignCenter))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(card)
+
+    def _row(self, text: str, fn, icon_name: str = "") -> QPushButton:
+        b = QPushButton(("   " if icon_name else "  ") + text, objectName="AcctRow")
+        if icon_name:
+            b.setIcon(look.icon(icon_name, self.win.t["sub"], 20))
+            b.setIconSize(QSize(20, 20))
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.clicked.connect(lambda: self._then(fn))
+        return b
+
+    def _account_row(self, address: str) -> QPushButton:
+        """Another saved account: its avatar, name and address, a click away."""
+        b = QPushButton(objectName="AcctRow", toolTip=f"Switch to {address}")
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setMinimumHeight(60)
+        b.clicked.connect(lambda: self._then(lambda: self.win._switch(address)))
+        row = QHBoxLayout(b)
+        row.setContentsMargins(16, 8, 16, 8)
+        row.setSpacing(14)
+        av = Avatar(34)
+        av.set(look.friendly_name(address), address, look.photo_path(address))
+        text = QVBoxLayout()
+        text.setSpacing(0)
+        name = QLabel(html.escape(look.friendly_name(address)), objectName="Sender")
+        mail = QLabel(html.escape(address), objectName="Sub")
+        for w in (av, name, mail):
+            w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        text.addWidget(name)
+        text.addWidget(mail)
+        row.addWidget(av)
+        row.addLayout(text, 1)
+        return b
+
+    def _then(self, fn) -> None:
+        """Close the card first, then act (dialogs and window swaps shouldn't open under a popup)."""
+        self.close()
+        QTimer.singleShot(0, fn)
+
+    def show_under(self, anchor: QWidget) -> None:
+        self.adjustSize()
+        pos = anchor.mapToGlobal(QPoint(anchor.width(), anchor.height() + 8))
+        self.move(pos.x() - self.width() + 6, pos.y())
+        self.show()
+
+    def hideEvent(self, e) -> None:
+        # tell the window the card is gone, and when, so the avatar click that closed it
+        # doesn't straight away open a new one
+        self.win._popup, self.win._popup_closed = None, time.monotonic()
+        super().hideEvent(e)
+
+
 # ── the window ──────────────────────────────────────────────────────────────
 
 class MailWindow(QMainWindow):
@@ -534,6 +672,9 @@ class MailWindow(QMainWindow):
         self.resize(1400, 880)
         self.worker = worker or Worker()
         self._keep_worker = False
+        self._closed = False
+        self._popup: AccountPopup | None = None
+        self._popup_closed = 0.0
         self.folder, self.fixed_query, self.tab, self.query = FOLDERS["Inbox"], "", "primary", ""
         self.uids: list[str] = []
         self.rows: list[Summary] = []
@@ -564,7 +705,7 @@ class MailWindow(QMainWindow):
         self.search.returnPressed.connect(self._search)
         self.search.setMaximumWidth(720)
         self.me = Avatar(38, clickable=True)
-        self.me.set(address or "?", address, look.photo_path(address))
+        self.me.set(look.friendly_name(address) if address else "?", address, look.photo_path(address))
         self.me.setToolTip(f"JUDO Mail account\n{address}" if address else "Add a Gmail account")
         self.me.clicked.connect(self._account_menu)
         top = QHBoxLayout()
@@ -765,7 +906,9 @@ class MailWindow(QMainWindow):
         self._reader_enabled(False)
         self._update_toolbar()
         self.load_folder()
-        self.worker.run(lambda mb: mb.labels(), self._got_labels)
+        self._run(lambda mb: mb.labels(), self._got_labels)
+        if address and address.lower() not in look.load_settings().get("names", {}):
+            self._run(lambda mb: mb.display_name(), self._got_name)
         # live sync: Gmail pushes changes through IDLE; a slower timer covers other folders and dropped pushes
         self.watcher = IdleWatcher() if isinstance(self.worker, Worker) else None
         if self.watcher:
@@ -773,6 +916,12 @@ class MailWindow(QMainWindow):
         timer = QTimer(self, interval=SYNC_MS)
         timer.timeout.connect(self._sync)
         timer.start()
+
+    def _run(self, fn, cb=lambda r: None) -> None:
+        """Gmail work on the shared connection. A theme or account change swaps this window
+        for a new one while answers are still on their way; once closed, it ignores them
+        instead of touching widgets Qt has already deleted."""
+        self.worker.run(fn, lambda r: None if self._closed else cb(r))
 
     # ── sidebar, tabs, list ────────────────────────────────────────────────
     def _sidebar_item(self, name: str, kind: str, folder: str = "", query: str = "") -> QListWidgetItem:
@@ -784,6 +933,12 @@ class MailWindow(QMainWindow):
             item.setFlags(Qt.ItemFlag.NoItemFlags)
         self.folders.addItem(item)
         return item
+
+    def _got_name(self, result) -> None:
+        if isinstance(result, str) and result:
+            look.remember_name(self.address, result)
+            self.me.set(result, self.address, look.photo_path(self.address))
+            self.me.setToolTip(f"JUDO Mail account\n{result}\n{self.address}")
 
     def _got_labels(self, result) -> None:
         if isinstance(result, list) and result:
@@ -832,13 +987,13 @@ class MailWindow(QMainWindow):
             b.setIcon(look.icon(icons[key], self.t["accent" if key == self.tab else "sub"], 18))
             b.style().unpolish(b)
             b.style().polish(b)
-        self.worker.run(lambda mb: (mb.uids(folder, query), folder, query), self._got_uids)
+        self._run(lambda mb: (mb.uids(folder, query), folder, query), self._got_uids)
         self._refresh_counts()
 
     def _refresh_counts(self) -> None:
-        self.worker.run(lambda mb: mb.unseen(FOLDERS["Inbox"]), self._got_unseen)
+        self._run(lambda mb: mb.unseen(FOLDERS["Inbox"]), self._got_unseen)
         if self._tabs_on():
-            self.worker.run(lambda mb: mb.category_new(), self._got_new)
+            self._run(lambda mb: mb.category_new(), self._got_new)
 
     def _got_unseen(self, result) -> None:
         if isinstance(result, int):
@@ -872,7 +1027,7 @@ class MailWindow(QMainWindow):
             self._status()
             return
         self._loading = True
-        self.worker.run(lambda mb: (mb.summaries(folder, chunk), folder), self._got_rows)
+        self._run(lambda mb: (mb.summaries(folder, chunk), folder), self._got_rows)
 
     def _maybe_more(self, value: int) -> None:
         """Load the next page as the list nears its end — no "Load more" button."""
@@ -923,7 +1078,7 @@ class MailWindow(QMainWindow):
             still = set(uids)
             return (folder, query, uids, mb.summaries(folder, fresh) if fresh else [],
                     mb.flags(folder, [u for u in loaded if u in still]))
-        self.worker.run(work, self._synced)
+        self._run(work, self._synced)
 
     def _synced(self, result) -> None:
         if isinstance(result, Exception):
@@ -996,7 +1151,7 @@ class MailWindow(QMainWindow):
                 "read": lambda mb: mb.mark_read(folder, joined, True),
                 "unread": lambda mb: mb.mark_read(folder, joined, False),
                 "star": lambda mb: mb.star(folder, joined, True)}[op]
-        self.worker.run(work, lambda r: self._failed(r) or self._bulk_done(op, set(uids)))
+        self._run(work, lambda r: self._failed(r) or self._bulk_done(op, set(uids)))
 
     def _bulk_done(self, op: str, uids: set[str]) -> None:
         if op in ("archive", "delete"):
@@ -1036,7 +1191,7 @@ class MailWindow(QMainWindow):
             if s.unread:
                 mb.mark_read(folder, s.uid)
             return mail, row
-        self.worker.run(fetch, self._show)
+        self._run(fetch, self._show)
 
     def _show(self, result) -> None:
         if self._failed(result):
@@ -1102,7 +1257,7 @@ class MailWindow(QMainWindow):
             folder = downloads()
         except Exception:
             folder = Path.home() / "Downloads"
-        self.worker.run(lambda mb: mb.save_attachment(mail, index, folder),
+        self._run(lambda mb: mb.save_attachment(mail, index, folder),
                         lambda r: self._failed(r) or self.statusBar().showMessage(f"Saved {r}", 8000))
 
     def _unsubscribe(self) -> None:
@@ -1160,7 +1315,7 @@ class MailWindow(QMainWindow):
             return
         s, folder = self.rows[row], self.folder
         on = not s.starred
-        self.worker.run(lambda mb: mb.star(folder, s.uid, on), lambda r: self._failed(r) or self._starred(row, on))
+        self._run(lambda mb: mb.star(folder, s.uid, on), lambda r: self._failed(r) or self._starred(row, on))
 
     def _starred(self, row: int, on: bool) -> None:
         self.rows[row].starred = on
@@ -1171,47 +1326,14 @@ class MailWindow(QMainWindow):
 
     # ── account menu ───────────────────────────────────────────────────────
     def _account_menu(self) -> None:
-        t, me = self.t, self.address
-        menu = QMenu(self)
-        card = QWidget(objectName="AccountCard")
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(26, 18, 26, 14)
-        cl.setSpacing(6)
-        big = Avatar(72, clickable=True)
-        big.set(me or "?", me, look.photo_path(me))
-        big.setToolTip("Change profile photo")
-        big.clicked.connect(lambda: (menu.close(), self._change_photo()))
-        first = (me.split("@")[0] if me else "there").replace(".", " ").split()[0].title()
-        hi = QLabel(f"Hi, {html.escape(first)}!", objectName="Title", alignment=Qt.AlignmentFlag.AlignCenter)
-        mail = QLabel(html.escape(me or "No account"), objectName="Sub", alignment=Qt.AlignmentFlag.AlignCenter)
-        cl.addWidget(big, 0, Qt.AlignmentFlag.AlignHCenter)
-        cl.addWidget(hi)
-        cl.addWidget(mail)
-        head = QWidgetAction(menu)
-        head.setDefaultWidget(card)
-        menu.addAction(head)
-        menu.addSeparator()
-        menu.addAction(look.icon("camera", t["sub"], 18), "Change profile photo…", self._change_photo)
-        if me and look.photo_path(me).exists():
-            menu.addAction(look.icon("close", t["sub"], 18), "Remove profile photo", self._remove_photo)
-        menu.addAction(look.icon("manage", t["sub"], 18), "Manage your Google Account",
-                       lambda: ThreadPoolExecutor(1).submit(_open_link, "https://myaccount.google.com/"))
-        others = [a for a in mbx.accounts() if a != me]
-        if others:
-            menu.addSection("Switch account")
-            for a in others:
-                menu.addAction(look.icon("manage", t["sub"], 18), a, lambda a=a: self._switch(a))
-        menu.addSeparator()
-        menu.addAction(look.icon("person_add", t["sub"], 18), "Add another account…", self._add_account)
-        theme = menu.addMenu(look.icon("theme", t["sub"], 18), "Theme")
-        current = look.load_settings().get("theme", "system")
-        for key, label in (("system", "Device (Windows)"), ("light", "Light"), ("dark", "Dark")):
-            a = theme.addAction(("✓   " if key == current else "      ") + label)
-            a.triggered.connect(lambda _, k=key: self._set_theme(k))
-        menu.addSeparator()
-        if me:
-            menu.addAction(look.icon("logout", t["sub"], 18), "Sign out of this account", self._sign_out)
-        menu.exec(self.me.mapToGlobal(QPoint(self.me.width() - menu.sizeHint().width(), self.me.height() + 6)))
+        """The avatar toggles the account card: open it, or close it when it is already open."""
+        if self._popup is not None:
+            self._popup.close()
+            return
+        if time.monotonic() - self._popup_closed < 0.3:     # this very click just closed the card
+            return
+        self._popup = AccountPopup(self)
+        self._popup.show_under(self.me)
 
     def _change_photo(self) -> None:
         if not self.address:
@@ -1230,12 +1352,12 @@ class MailWindow(QMainWindow):
         dest = look.photo_path(self.address)
         dest.parent.mkdir(parents=True, exist_ok=True)
         img.save(str(dest), "PNG")
-        self.me.set(self.address, self.address, dest)
+        self.me.set(look.friendly_name(self.address), self.address, dest)
         self.statusBar().showMessage("Profile photo updated (kept on this PC)", 5000)
 
     def _remove_photo(self) -> None:
         look.photo_path(self.address).unlink(missing_ok=True)
-        self.me.set(self.address, self.address, None)
+        self.me.set(look.friendly_name(self.address), self.address, None)
 
     def _add_account(self) -> None:
         if AccountDialog(self).exec():
@@ -1282,6 +1404,7 @@ class MailWindow(QMainWindow):
         return False
 
     def closeEvent(self, e) -> None:
+        self._closed = True
         if self.watcher:
             self.watcher.stop()
         if not self._keep_worker:
@@ -1303,6 +1426,8 @@ def main() -> int:
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName("JUDO Mail")
+    import traceback
+    sys.excepthook = lambda *exc: traceback.print_exception(*exc)   # log it; keep the window running
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
     app.setWindowIcon(look.app_icon())
