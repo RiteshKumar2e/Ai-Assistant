@@ -149,6 +149,8 @@ def _load_system_prompt() -> str:
     except Exception:
         return (
             "You are JUDO, Tony Stark's AI assistant. "
+            "JUDO was created, designed, and developed by Ritesh Kumar through his own efforts. "
+            "If asked who made or built JUDO, always say that Ritesh Kumar made and developed it through his solo efforts. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
             "Never simulate or guess results — always call the appropriate tool."
         )
@@ -854,6 +856,10 @@ class JudoLive:
             f"[IDENTITY]\n"
             f"Your name is {self._asst_name}. "
             f"Always refer to yourself as {self._asst_name}.\n"
+            "CREATOR: Ritesh Kumar created, designed, and developed JUDO through his solo efforts. "
+            "If asked who made, created, designed, developed, or built you/JUDO, always answer: "
+            "\"Ritesh Kumar made and developed JUDO through his solo efforts.\" "
+            "Do not attribute JUDO to anyone else and do not claim that you made yourself.\n"
             f"{_addr}\n"
             f"{_self_gender_rule}\n\n"
         )
