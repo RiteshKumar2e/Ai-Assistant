@@ -76,7 +76,21 @@ class JobsWindow(QMainWindow):
         self.setWindowTitle("JUDO Jobs")
         self.resize(1250, 820)
         self.t = look.palette()
-        self.setStyleSheet(look.stylesheet(self.t))
+        t = self.t
+        self.setStyleSheet(look.stylesheet(t) + f"""
+            QTextEdit, QLineEdit, QTableWidget {{ background: {t['card']}; color: {t['text']}; border: 1px solid {t['line']};
+                border-radius: 10px; padding: 6px; selection-background-color: {t['select']}; selection-color: {t['text']}; }}
+            QLineEdit {{ padding: 8px 10px; }}
+            QTableWidget {{ gridline-color: {t['line']}; }}
+            QTableWidget::item {{ color: {t['text']}; padding: 4px; }}
+            QHeaderView::section {{ background: {t['bg']}; color: {t['sub']}; border: none; border-bottom: 1px solid {t['line']};
+                padding: 6px; font-weight: 600; }}
+            QTabWidget::pane {{ border: none; }}
+            QTabBar::tab {{ background: transparent; color: {t['sub']}; padding: 10px 18px; font-weight: 600; }}
+            QTabBar::tab:selected {{ color: {t['accent']}; border-bottom: 3px solid {t['accent']}; }}
+            QDialog QLabel, QLabel {{ color: {t['text']}; }}
+            #Sub {{ color: {t['sub']}; }}
+        """)
         self.setWindowIcon(look.app_icon())
         self.bus = _Bus()
         self.bus.done.connect(lambda cb, r: cb(r))

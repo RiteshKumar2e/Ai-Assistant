@@ -149,7 +149,37 @@ A Chrome-like browser on the Chromium engine (Qt WebEngine), made for JUDO. **Ev
 python -m judo_mail
 ```
 
-A Gmail client window over IMAP/SMTP, laid out in the familiar three panes (folders · messages · the open mail) but with JUDO's own look: JUDO Spectrum colours, a violet→rose Compose button, rounded cards, coloured sender avatars, two-line rows with friendly dates ("3:45 PM", "12 Oct"), an unread count on Inbox, and light / dark mode following Windows. Gmail search syntax, reading mail (its scripts turned off, shown on a white page, links opening in JUDO Browser), attachment chips that save to Downloads, compose / reply / reply-all / forward, star, mark unread, delete, and more mail loading as you scroll. Shortcuts: Ctrl+N compose, Ctrl+R reply, Del delete, F5 refresh, / search. Needs `gmail_address` and `gmail_app_password` (a Google App Password, not your account password) in `config/api_keys.json`.
+A Gmail client that works the way Gmail does, in JUDO's own look (JUDO Spectrum colours, violet→rose Compose, light / dark / device theme):
+
+- **Live sync with Gmail** — IMAP IDLE pushes new mail, deletions and read/star changes the moment they happen; times are shown in your own time zone, from when Gmail received the mail.
+- **Gmail layout** — ☰ collapses the menu to icons; the list fills the page with one-line rows (☐ ☆ sender · labels · **subject** - preview · 📎 · time); a click opens the mail full-page with ← back, "3 of 50" and newer / older (Esc, J / K). Primary / Promotions / Social / Updates tabs, your Gmail labels, multi-select with archive / delete / read / unread / star, Unsubscribe.
+- **Fast** — the list and the open mail use separate Gmail connections, folders you've visited show instantly from cache, and the next mail is fetched before you ask for it.
+- **Accounts** — Google-style sign-in (email first, then the App Password), several accounts with switching, profile photo, a Google-like account card.
+- **Copy anything** — select text with the mouse; right-click menus with Copy / Select all / link and image actions; Ctrl+C on a message copies it.
+
+**"Open mail" always means JUDO Mail** — "mail kholo", "open Gmail / Outlook / inbox", gmail.com, mail.google.com, outlook.com… never open Edge, Chrome or a webmail tab. Like JUDO Browser it runs once: if it's already open, its window comes to the front (Windows mutex + a token-protected localhost focus call).
+
+Signing in needs a Google **App Password** (Google doesn't let other apps use your normal password). JUDO can also write and send mail by voice to people named from your Gmail contacts, always after you confirm on screen.
+
+### 💼 Job Agent — finds jobs and applies, from *your* resume
+
+```
+python -m jobs        # the JUDO Jobs window — or just say "find jobs for me"
+```
+
+Works for whoever uses JUDO — nothing is tied to one person. It starts from the user's own resume:
+
+1. **"Find jobs for me"** with no resume → *"Please upload your latest resume first…"*. PDF, DOCX and TXT are read; name, contact, education (degree, year, CGPA), experience (full-time vs internships, months counted), projects, skills (by category), certifications, achievements and links are extracted — and only what the resume actually says (an optional model pass may fill gaps, but anything not found in the resume text is dropped).
+2. JUDO shows the summary — **[Looks Correct] [Edit Profile] [Upload Different Resume]** — and doesn't rely on it until confirmed. Several resumes per user; pick which to use.
+3. **Preferences** — only what the resume can't tell: roles, locations, remote / hybrid / on-site, salary, experience range (e.g. *only 0–2 years*), internships, international remote. Gaps are filled from the resume and said out loud.
+4. **Live search** across company career pages and ATS boards first (Greenhouse, Lever, Ashby, Workday), then LinkedIn, Wellfound, Indeed, Naukri, Instahyre. Every result's page is **opened and read** (public ATS APIs, schema.org JobPosting, page text): company, title, location, posted date, source, job + apply URL, last-verified time; closed postings are marked expired, duplicates across sites merged. "Fresh" uses the posting's own date — an unknown date is never called fresh.
+5. **Resume ↔ JD matching** — required vs preferred skills, experience (required vs preferred years, internships vs full-time), education ("or equivalent"), location / remote region, work authorisation (only from what you told it) → **ELIGIBLE / POTENTIALLY ELIGIBLE / NOT ELIGIBLE**, with the reasons and the JD sentence each came from.
+6. **Tailored resume** (optional) — reorders your skills, projects and bullets for the job; a validator rejects any version that adds a skill, project, employer, title, date or number your resume doesn't have. Shown to you first; used only if you say so.
+7. **Applying** — opens the real application in **JUDO Browser**, checks it's the right job and still open, stops on **CAPTCHA** ("please complete it manually") or a login wall, reads the form, fills what your verified profile answers, attaches your resume, and lists every question it won't guess: notice period, salary, visa / sponsorship, work authorisation, consent, and demographic questions (never inferred — answer or skip).
+8. **APPLICATION REVIEW → [CONFIRM & SUBMIT] [CANCEL]** — submitting is only possible from the on-screen confirmation (`core/confirm`), with a single-use token the model never sees; changing the form after the review voids it.
+9. **Verified, then tracked** — "applied" only with evidence (success page, confirmation number); otherwise *SUBMISSION UNVERIFIED* or *FAILED*. A per-user tracker (DISCOVERED → … → VERIFIED / FAILED / EXPIRED / ALREADY_APPLIED) refuses to apply twice to the same job, even when found on another site.
+
+Each user's resumes, profile, preferences, jobs and applications live in their own folder (`~/.judo/jobs/users/<user id>/`) and are never shared with another user.
 
 ### 🧍‍♀️ A face and a body — the 3D avatar
 
@@ -433,6 +463,8 @@ Ai-Assistant/
 │   ├── passwords.py          # Saved passwords, DPAPI-encrypted, filled per exact site
 │   ├── omnibox.py / dialogs.py / app_data.py  # Address bar, settings/history/downloads dialogs, settings storage
 ├── judo_mail/                # JUDO Mail — Gmail over IMAP/SMTP (mailbox.py) in a PyQt window (app.py)
+├── jobs/                     # Job Agent — resume.py · profile.py · jd.py · match.py · search.py · tailor.py ·
+│                             #   apply.py (confirm-gated submit) · tracker.py · service.py · window.py (python -m jobs)
 ├── voice_training/           # Notebooks + Colab bundle that train JUDO's own Piper voice from one recording
 ├── run_seed_generator.ps1    # Starts the seed generator in the background (used at logon)
 ├── setup.py                  # OS-aware installer (skips wrong-OS dependencies)
@@ -442,7 +474,8 @@ Ai-Assistant/
 │   ├── unit_converter.py     # Length, weight, temperature & live-rate currency conversion
 │   ├── calendar_agenda.py    # Local calendar — add/list/remove events, ties into reminder for alerts
 │   ├── quiz_mode.py          # Voice quiz — local question generation, scoring, multi-turn state
-│   ├── send_email.py         # Sends Gmail via the user's real logged-in browser session, no password stored
+│   ├── send_email.py         # Writes & sends mail by voice through JUDO Mail (names → addresses from Gmail), after on-screen confirm
+│   ├── job_agent.py          # Job Agent by voice — resume first, search, match, tailor, apply (submit only via CONFIRM)
 │   └── ...                   # Drop-in skills (each self-describes via a PLUGIN dict + run())
 ├── actions/                  # Bundled skills — each self-describes via a TOOL dict + handler
 │   ├── web_search.py         # Gemini + DDG parallel search (news, research, price, compare)

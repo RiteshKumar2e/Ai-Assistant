@@ -69,17 +69,21 @@ def test_open_app_chrome_brings_up_judo_browser(monkeypatch):
 def test_open_app_mail_aliases_launch_judo_mail(monkeypatch):
     import actions.open_app as oa
 
+    from judo_mail import client as mc
+
     launched = []
-    monkeypatch.setattr(oa, "_launch_judo_mail", lambda: launched.append(True) or True)
+    monkeypatch.setattr(mc, "open_mail", lambda: launched.append(True) or "Opening JUDO Mail.")
     for name in ("mail", "Gmail", "email", "inbox", "JUDO Mail", "judo_mail", "gmail.com", "my mailbox"):
-        assert oa.open_app({"app_name": name}) == "JUDO Mail opened."
+        assert oa.open_app({"app_name": name}) == "Opening JUDO Mail."
     assert len(launched) == 8
 
 
 def test_open_app_mail_reports_launch_failure(monkeypatch):
     import actions.open_app as oa
+    from judo_mail import client as mc
 
-    monkeypatch.setattr(oa, "_launch_judo_mail", lambda: False)
+    monkeypatch.setattr(mc, "running", lambda: False)
+    monkeypatch.setattr(mc, "start", lambda: False)
     assert oa.open_app({"app_name": "Gmail"}) == "Could not open JUDO Mail."
 
 

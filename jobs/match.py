@@ -192,15 +192,19 @@ def match(job: dict, profile: dict, prefs: dict | None = None) -> dict:
 
 def _location(job, a, profile, prefs, blockers, concerns) -> dict:
     where = (job.get("location") or "").strip()
-    mode = job.get("work_mode") or a["work_mode"] or ""
-    if re.search(r"(?i)\bremote\b", where):
+    jd_mode = a["work_mode"]
+    # The posting's own work mode wins. The description's wording is a weak signal ("work with remote teams"),
+    # so it may say hybrid/on-site, but it only makes a job remote when the posting names no place at all.
+    mode = job.get("work_mode") or (jd_mode if jd_mode in ("hybrid", "onsite") or not where else "")
+    here = jdmod.places(where)
+    if here["remote"]:
         mode = "remote"
     user_loc = (profile.get("candidate") or {}).get("location", "")
     user_country = country_of(user_loc).lower()
-    wanted = [w.lower() for w in (prefs.get("locations") or []) if w]
+    user_countries = jdmod.places(user_loc)["countries"] or ({user_country} if user_country else set())
+    wanted = [w for w in (prefs.get("locations") or []) if w and w.strip()]
     pref_mode = str(prefs.get("remote") or "any").lower()
     out = {"job": where or "not stated", "mode": mode or "not stated", "ok": None}
-    low = where.lower()
     if pref_mode == "remote" and mode in ("onsite", "hybrid"):
         blockers.append(f"This role is {mode}; you asked for remote roles.")
         out["ok"] = False
@@ -208,14 +212,16 @@ def _location(job, a, profile, prefs, blockers, concerns) -> dict:
     if pref_mode == "onsite" and mode == "remote":
         concerns.append("This is a remote role; you asked for on-site roles.")
     if mode == "remote":
-        restricted = re.search(r"(?i)remote\s*[-–(,]\s*([A-Za-z .]+)", where)
-        region = (restricted.group(1).strip() if restricted else "").lower()
-        if region and user_country and user_country not in region and region not in ("anywhere", "worldwide", "global"):
+        # "Remote - US", "United States (Remote)", "Remote, UK / Portugal" → only those countries
+        region = here["countries"] - {"apac"} if not here["anywhere"] else set()
+        if region and user_countries and not (region & user_countries):
+            label = ", ".join(sorted(r.title() for r in region))
+            you = (user_country or next(iter(user_countries))).title()
             if prefs.get("international_remote"):
-                concerns.append(f"Remote, but limited to {region.title()} — check whether they hire from {user_country.title()}.")
+                concerns.append(f"Remote, but limited to {label} — check whether they hire from {you}.")
                 out["ok"] = None
             else:
-                blockers.append(f"Remote only within {region.title()}; you're in {user_country.title()}.")
+                blockers.append(f"Remote only within {label}; you're in {you}.")
                 out["ok"] = False
         else:
             out["ok"] = True
@@ -223,9 +229,9 @@ def _location(job, a, profile, prefs, blockers, concerns) -> dict:
     if not where:
         concerns.append("The job location isn't stated.")
         return out
-    if wanted and any(w in low for w in wanted):
+    if wanted and any(jdmod.place_matches(where, w) for w in wanted):
         out["ok"] = True
-    elif user_country and user_country in low:
+    elif user_countries & here["countries"]:
         out["ok"] = None
         concerns.append(f"The job is in {where}, a different city from your preferences — relocation may be needed.")
     elif wanted or user_country:

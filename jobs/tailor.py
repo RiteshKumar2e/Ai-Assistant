@@ -68,7 +68,7 @@ def tailor(profile: dict, job: dict) -> dict:
     for s in skills:
         by_cat.setdefault(sk.category(s), []).append(s)
     names = {"language": "Languages", "framework": "Frameworks & Libraries", "database": "Databases",
-             "cloud": "Cloud & DevOps", "tool": "Tools", "practice": "Areas", "other": "Other"}
+             "cloud": "Cloud & Infrastructure", "tool": "Tools", "practice": "Areas", "other": "Other"}
     for cat in ("language", "framework", "database", "cloud", "tool", "practice", "other"):
         if by_cat.get(cat):
             add(f"{names[cat]}: {', '.join(by_cat[cat])}")

@@ -1787,7 +1787,36 @@ class MailWindow(QMainWindow):
         super().closeEvent(e)
 
 
+class _FocusRelay(QObject):
+    """The control server's "focus" arrives on its own thread; windows are raised on the UI thread."""
+    requested = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.requested.connect(self._raise, Qt.ConnectionType.QueuedConnection)
+
+    @staticmethod
+    def _raise() -> None:
+        # the sign-in dialog when it is up, else the newest mail window
+        w = QApplication.activeModalWidget() or (_windows[-1] if _windows else None)
+        if w is None:
+            w = next((x for x in QApplication.topLevelWidgets() if x.isVisible() and x.isWindow()), None)
+        if w is None:
+            return
+        if w.isMinimized():
+            w.showNormal()
+        w.show()
+        w.raise_()
+        w.activateWindow()
+        from judo_mail import client
+        client.bring_to_front(int(w.winId()))
+
+
 def main() -> int:
+    from judo_mail import client
+    if not client.claim_instance():          # already running: bring that one forward, don't open a second
+        client.hand_over()
+        return 0
     if sys.platform == "win32":
         import ctypes   # its own taskbar identity and icon instead of Python's
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Ritesh.JUDO.Mail")
@@ -1803,7 +1832,11 @@ def main() -> int:
     TextMenus.install(app)       # select and copy text anywhere with the mouse
     app.setFont(QFont("Segoe UI", 10))
     app.setWindowIcon(look.app_icon())
+    relay = _FocusRelay()                    # serving before sign-in, so "open mail" finds that dialog too
+    client.serve(relay.requested.emit)
+    app.aboutToQuit.connect(client.cleanup)
     if not mbx.accounts() and not AccountDialog(first=True).exec():
+        client.cleanup()
         return 0
     w = MailWindow()
     _windows.append(w)

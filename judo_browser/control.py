@@ -198,7 +198,11 @@ class Commands:
             tab = w.tabs.widget(i)
             if host and tab.url().host().removeprefix("www.") == host:
                 w.tabs.setCurrentIndex(i)
-                return done(f"Switched to the open {tab.title() or host} tab.")
+                if url.path() in ("", "/") and not url.hasQuery() or tab.url().matches(
+                        url, QUrl.UrlFormattingOption.StripTrailingSlash | QUrl.UrlFormattingOption.RemoveFragment):
+                    return done(f"Switched to the open {tab.title() or host} tab.")
+                self._after_load(tab, done, f"Opening {url.toString()} (still loading).")   # same site, another page
+                return w.load(url, tab)
         blank = v.url().toString() in ("", "about:blank")
         target = v if blank else w.new_tab(blank=True)
         self._after_load(target, done, f"Opening {url.toString()} (still loading).")
@@ -345,7 +349,12 @@ class Commands:
             e => vis(e) || e.type === 'file').length;
           const buttons = [...document.querySelectorAll('button,input[type=submit],[role=button],a.button,a[class*=apply]')]
             .filter(vis).map(b => (b.innerText || b.value || b.getAttribute('aria-label') || '').trim()).filter(Boolean).slice(0, 40);
-          return {url: location.href, title: document.title, text, captcha, password_fields: pw, fields, buttons};
+          // fields the browser itself refuses (HTML5 validation): its message is a bubble, not page text
+          const invalid = [...document.querySelectorAll('input:not([type=hidden]),select,textarea')]
+            .filter(e => (vis(e) || e.type === 'file') && e.willValidate && !e.validity.valid).slice(0, 10)
+            .map(e => (((e.labels && e.labels[0] && e.labels[0].innerText) || e.name || e.id || '').trim().slice(0, 80)
+                       + ': ' + e.validationMessage).trim());
+          return {url: location.href, title: document.title, text, captcha, password_fields: pw, fields, buttons, invalid};
         })()"""
         self._js(v, script, done, lambda r: r or {"error": "page did not answer"})
 
@@ -398,7 +407,10 @@ class Commands:
                        value: type === 'file' ? (e.files.length ? e.files[0].name : '')
                             : (type === 'checkbox' ? (e.checked ? 'yes' : '') : (e.value || '')),
                        accept: e.getAttribute('accept') || '', autocomplete: e.getAttribute('autocomplete') || ''};
-            if (type === 'select') f.options = [...e.options].map(o => clean(o.text)).filter(Boolean);
+            if (type === 'select') {   // choices by their text; the "Select..." placeholder (value "") isn't one
+              f.options = [...e.options].filter(o => o.value !== '').map(o => clean(o.text)).filter(Boolean);
+              f.value = e.selectedIndex >= 0 && e.value !== '' ? clean(e.options[e.selectedIndex].text) : '';
+            }
             out.push(f);
           }
           return out;
@@ -443,8 +455,9 @@ class Commands:
             return done("missing-file")
         locate = r"""(() => {
           const e = document.querySelector(%s); if (!e) return null;
-          const vis = x => { const r = x.getBoundingClientRect(); const s = getComputedStyle(x);
-            return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
+          const vis = x => { const r = x.getBoundingClientRect(); const s = getComputedStyle(x);   // on screen, not parked at left:-9999px
+            return r.width > 2 && r.height > 2 && r.right > 0 && r.left < innerWidth && s.visibility !== 'hidden'
+              && s.display !== 'none' && s.opacity !== '0'; };
           let t = vis(e) ? e : ((e.id && document.querySelector('label[for="' + CSS.escape(e.id) + '"]')) || null);
           if (!t || !vis(t)) { t = null; for (let n = e.parentElement, i = 0; n && i < 4 && !t; i++, n = n.parentElement) {
               t = [...n.querySelectorAll('button,[role=button],label,a')].find(vis) || null; } }

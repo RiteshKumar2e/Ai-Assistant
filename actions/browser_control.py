@@ -313,7 +313,11 @@ def _preferred_browser() -> str:
 
 def open_in_browser(url: str) -> bool:
     """Open a URL in JUDO Browser as a new tab — for actions that just need to
-    show a page. Never opens Edge/Chrome (unless config "default_browser" says so)."""
+    show a page. Never opens Edge/Chrome (unless config "default_browser" says so).
+    A webmail address opens JUDO Mail instead."""
+    from judo_mail import client as judo_mail
+    if judo_mail.is_mail_url(url):
+        return not judo_mail.open_mail().startswith("Could not")
     if _judo_browser_default():
         try:
             from judo_browser import client as judo_client
@@ -1034,6 +1038,16 @@ def browser_control(
     browser = params.get("browser", "").lower().strip() or None
     result  = "Unknown action."
 
+    # ── Mail is JUDO Mail, not a tab ──
+    # "Gmail kholo" / go_to gmail.com / outlook.live.com / mail.yahoo.com open
+    # JUDO's own mail app (focused if already open). Compose links (send_email's
+    # no-account fallback) and searches *about* Gmail still go to the browser.
+    if _opens_mail(action, params):
+        from judo_mail import client as judo_mail
+        result = judo_mail.open_mail()
+        _log(player, result)
+        return result
+
     # ── JUDO Browser only ──
     # Every action goes to JUDO's own browser (judo_browser/), started on
     # demand — even when the user names Chrome or Edge, which JUDO never opens.
@@ -1151,6 +1165,17 @@ def browser_control(
     return result
 
 
+def _opens_mail(action: str, params: dict) -> bool:
+    """go_to / new_tab of a webmail address, or a search that is just a mail app's name."""
+    from judo_mail import client as judo_mail
+    if action in ("go_to", "new_tab"):
+        return judo_mail.is_mail_url(str(params.get("url", "")))
+    if action == "search":
+        q = str(params.get("query", ""))
+        return judo_mail.is_mail_url(q) or judo_mail.is_mail_app(q, strict=True)
+    return False
+
+
 _JUDO_ALIASES = {"switch": "focus", "list_browsers": "focus"}   # one browser: these just bring it forward
 
 
@@ -1206,7 +1231,7 @@ def _log(player, text: str):
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "browser_control",
-    "description": "Controls JUDO Browser — JUDO's own Chrome-like browser and the ONLY browser JUDO uses. Use for: opening ANY website or URL ('YouTube kholo', 'open chatgpt', 'gmail kholo', 'amazon.in pe jao'), showing search results, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. It starts by itself if closed. go_to/search/new_tab open as tabs in its window; go_to a site that already has an open tab (e.g. chatgpt.com) switches to that tab. switch_tab (target = words from the tab title, e.g. 'ChatGPT') brings an open tab to the front. Reading the page, clicking, typing and pressing keys all work in it. Chrome, Edge and other browsers are never opened — even 'Chrome kholo' / 'open in Edge' means JUDO Browser, so leave 'browser' empty. If an action can't be done the tool says so — report that honestly.",
+    "description": "Controls JUDO Browser — JUDO's own Chrome-like browser and the ONLY browser JUDO uses. Use for: opening ANY website or URL ('YouTube kholo', 'open chatgpt', 'amazon.in pe jao') — except mail: Gmail, Outlook, Yahoo Mail, gmail.com, mail.google.com and 'mail kholo' open JUDO Mail (JUDO's own mail app; use open_app for those), never a webmail tab, showing search results, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. It starts by itself if closed. go_to/search/new_tab open as tabs in its window; go_to a site that already has an open tab (e.g. chatgpt.com) switches to that tab. switch_tab (target = words from the tab title, e.g. 'ChatGPT') brings an open tab to the front. Reading the page, clicking, typing and pressing keys all work in it. Chrome, Edge and other browsers are never opened — even 'Chrome kholo' / 'open in Edge' means JUDO Browser, so leave 'browser' empty. If an action can't be done the tool says so — report that honestly.",
 
     "parameters": {
         "type": "OBJECT",

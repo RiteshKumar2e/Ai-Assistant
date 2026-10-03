@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 import secrets
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -127,6 +128,7 @@ class BrowserPort:
 
 
 class ApplicationSession:
+    FORM_RETRIES, FORM_WAIT = 3, 1.5      # seconds — a React form can appear a moment after the page loads
     def __init__(self, job: dict, profile: dict, resume_file: str, tracker: Tracker, *, answers: dict | None = None,
                  browser=None, llm=None, confirm_module=None, log: Callable[[str], None] | None = None):
         self.job, self.profile, self.resume_file = job, profile, resume_file
@@ -166,6 +168,11 @@ class ApplicationSession:
             if (blocked := self._blocked(st)):
                 return blocked
         form = self.browser.call("read_form", {}) or []
+        for _ in range(self.FORM_RETRIES):            # forms built by scripts after the page loads
+            if form:
+                break
+            time.sleep(self.FORM_WAIT)
+            form = self.browser.call("read_form", {}) or []
         if not form:
             self.state = "blocked"
             return self._say("I couldn't find an application form on this page. It may need you to sign in or "
@@ -418,6 +425,8 @@ class ApplicationSession:
         """Runs only from core/confirm.resolve(True) — the human pressed CONFIRM."""
         with self._lock:
             ok = self._token is not None and secrets.compare_digest(self._token, token)
+            if not ok:
+                return "That confirmation is no longer valid — nothing was submitted."
             self._token = None                          # single use
             unchanged = self._reviewed == self._snapshot()
         if not ok:
@@ -443,10 +452,10 @@ class ApplicationSession:
             self.state = "failed"
             self.tracker.upsert(self.job, "FAILED", notes="couldn't find the submit button")
             return self._say("I couldn't find the form's submit button, so nothing was sent. It's open in JUDO Browser.")
-        return self._verify(res.get("after") or {})
+        return self._verify(res.get("after") or {}, before_url=st.get("url", ""))
 
     # ── 3. evidence ───────────────────────────────────────────────────────
-    def _verify(self, after: dict) -> str:
+    def _verify(self, after: dict, before_url: str = "") -> str:
         text, url = after.get("text", "") or "", after.get("url", "") or ""
         success, number = SUCCESS.search(text), CONFIRM_NO.search(text)
         if success or number or re.search(r"(?i)/(?:thank[-_]?you|confirmation|application[-_]?submitted|success)\b", url):
@@ -461,6 +470,12 @@ class ApplicationSession:
             self.state = "failed"
             self.tracker.upsert(self.job, "FAILED", notes=f"form error: {err}")
             return self._say(f"The site didn't accept the application (“{err}”). It's open in JUDO Browser so you can fix it.")
+        if after.get("invalid") and url.split("#")[0] == before_url.split("#")[0]:
+            # the browser's own validation stopped the submit (its message is a bubble, not page text)
+            err = after["invalid"][0]
+            self.state = "failed"
+            self.tracker.upsert(self.job, "FAILED", notes=f"not sent — form error: {err}")
+            return self._say(f"The form wasn't sent: the page rejected “{err}”. It's open in JUDO Browser so you can fix it.")
         self.state = "submitted"
         self.tracker.upsert(self.job, "SUBMITTED", verification_evidence="SUBMISSION UNVERIFIED — no confirmation shown",
                             notes=f"after submit: {after.get('title', '')} {url}")

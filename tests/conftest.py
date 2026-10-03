@@ -16,6 +16,17 @@ def no_real_judo_browser(monkeypatch):
     monkeypatch.setattr(bc, "_judo_browser_default", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def no_real_judo_mail(monkeypatch, tmp_path):
+    """open_app("mail") / go_to gmail.com start or focus JUDO Mail — no test may
+    launch the real app or poke one the user has open. Tests of that path fake
+    running()/focus()/start() themselves."""
+    from judo_mail import client as mc
+    monkeypatch.setattr(mc, "CONTROL_FILE", tmp_path / "judo-mail-control.json")
+    monkeypatch.setattr(mc, "_mutex_exists", lambda: False)
+    monkeypatch.setattr(mc, "start", lambda: pytest.fail("a test tried to launch the real JUDO Mail"))
+
+
 # ── Agent test doubles ───────────────────────────────────────────────────────
 class ScriptedLLM:
     """Stands in for the model. `plan` answers the planner prompt; `actions` are
