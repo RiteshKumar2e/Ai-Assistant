@@ -283,6 +283,19 @@ def stylesheet(t: dict) -> str:
              color: {t['sub']}; font-size: 9pt; }}
     #Unsub:hover {{ color: {t['accent']}; border-color: {t['accent']}; }}
     #Hint {{ color: {t['sub']}; font-size: 9pt; }}
+    #SignTitle {{ font-size: 19pt; font-weight: 500; }}
+    #SignSub {{ color: {t['sub']}; font-size: 10pt; }}
+    #Box {{ border: 1px solid {t['faint']}; border-radius: 6px; padding: 13px 14px; background: transparent;
+           font-size: 11pt; color: {t['text']}; }}
+    #Box:focus {{ border: 2px solid {t['accent']}; padding: 12px 13px; }}
+    #Box[error="true"] {{ border: 2px solid {t['danger']}; padding: 12px 13px; }}
+    #Error {{ color: {t['danger']}; font-size: 9pt; }}
+    #Who {{ border: 1px solid {t['line']}; border-radius: 17px; padding: 5px 14px 5px 6px; background: transparent;
+           color: {t['text']}; font-weight: 500; }}
+    #Who:hover {{ background: {t['hover']}; }}
+    #Flat {{ border: none; background: transparent; color: {t['accent']}; font-weight: 600; padding: 9px 16px;
+            border-radius: 18px; }}
+    #Flat:hover {{ background: {t['hover']}; }}
     #Link {{ border: none; background: transparent; color: {t['accent']}; text-align: left; padding: 0; }}
     #Link:hover {{ text-decoration: underline; }}
     #AccountCard {{ background: {t['card']}; }}

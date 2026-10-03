@@ -24,13 +24,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import (QColor, QFont, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut,
+from PyQt6.QtGui import (QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut,
                          QStandardItem, QStandardItemModel, QTextDocument)
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
                              QListView, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-                             QSplitter, QStyle, QStyledItemDelegate, QTextEdit, QToolButton, QVBoxLayout, QWidget)
+                             QSplitter, QStackedWidget, QStyle, QStyledItemDelegate, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 
 from judo_mail import look
 from judo_mail import mailbox as mbx
@@ -462,64 +462,198 @@ class Compose(QDialog):
 # ── accounts ────────────────────────────────────────────────────────────────
 
 class AccountDialog(QDialog):
-    """Add a Gmail account: address + App Password, checked with Gmail before it is saved."""
+    """Add a Gmail account the way Google signs you in: first the email, then, on its own
+    page with the address shown as a chip, the password. Gmail only lets other apps in
+    with an App Password, so that is what the second page asks for; it is checked with
+    Gmail before anything is saved."""
 
     def __init__(self, parent=None, first: bool = False):
-        super().__init__(parent, windowTitle="Add a Gmail account")
+        super().__init__(parent, windowTitle="Sign in – JUDO Mail")
         self.t = parent.t if parent else look.palette()
-        if not parent:
-            self.setStyleSheet(look.stylesheet(self.t))
+        self.setStyleSheet(look.stylesheet(self.t))
         self.setWindowIcon(look.app_icon())
-        self.setMinimumWidth(540)
-        logo = QLabel()
-        logo.setPixmap(look.app_icon().pixmap(48, 48))
-        title = QLabel("Welcome to JUDO Mail" if first else "Add another account", objectName="Title")
-        hint = QLabel("Sign in with your Gmail address and a Google <b>App Password</b> — a 16-letter password "
-                      "made for one app. Your normal Google password won't work here, and the App Password is "
-                      "kept only on this PC.", objectName="Hint", wordWrap=True)
-        how = QPushButton("Create an App Password  (Google Account → Security → App passwords)  ↗", objectName="Link")
-        how.setCursor(Qt.CursorShape.PointingHandCursor)
-        how.clicked.connect(lambda: ThreadPoolExecutor(1).submit(_open_link, "https://myaccount.google.com/apppasswords"))
-        self.address = QLineEdit(objectName="Field", placeholderText="you@gmail.com")
-        self.password = QLineEdit(objectName="Field", placeholderText="App Password — xxxx xxxx xxxx xxxx")
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.status = QLabel("", objectName="Hint", wordWrap=True)
-        self.ok = QPushButton("Sign in", objectName="Primary")
-        self.ok.setDefault(True)
-        self.ok.clicked.connect(self._check)
-        cancel = QPushButton("Cancel", objectName="Pill")
-        cancel.clicked.connect(self.reject)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(cancel)
-        buttons.addWidget(self.ok)
+        self.setFixedWidth(480)
+        self.first = first
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._email_page())
+        self.pages.addWidget(self._password_page())
         card = QFrame(objectName="Card")
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(28, 24, 28, 22)
-        cl.setSpacing(12)
-        for w in (logo, title, hint, how, self.address, self.password, self.status):
-            cl.addWidget(w)
-        cl.addLayout(buttons)
+        cl.setContentsMargins(36, 32, 36, 28)
+        cl.addWidget(self.pages)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
         lay.addWidget(card)
 
+    @staticmethod
+    def _page() -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        logo = QLabel()
+        logo.setPixmap(look.app_icon().pixmap(44, 44))
+        v.addWidget(logo, 0, Qt.AlignmentFlag.AlignHCenter)
+        v.addSpacing(14)
+        return page, v
+
+    # page 1: the email
+    def _email_page(self) -> QWidget:
+        page, v = self._page()
+        v.addWidget(QLabel("Sign in", objectName="SignTitle", alignment=Qt.AlignmentFlag.AlignCenter))
+        v.addSpacing(6)
+        v.addWidget(QLabel("to continue to JUDO Mail" if self.first else "Add another Google account",
+                           objectName="SignSub", alignment=Qt.AlignmentFlag.AlignCenter))
+        v.addSpacing(30)
+        self.address = QLineEdit(objectName="Box", placeholderText="Email or Gmail username")
+        self.address.returnPressed.connect(self._next)
+        self.address.textEdited.connect(lambda _: self._error(self.address, self.email_error, ""))
+        v.addWidget(self.address)
+        v.addSpacing(6)
+        self.email_error = QLabel("", objectName="Error", wordWrap=True)
+        self.email_error.hide()
+        v.addWidget(self.email_error)
+        v.addSpacing(8)
+        v.addWidget(_link("Forgot email?", "https://accounts.google.com/signin/usernamerecovery"),
+                    0, Qt.AlignmentFlag.AlignLeft)
+        v.addSpacing(26)
+        v.addWidget(QLabel("Only Gmail accounts can be added. Your sign-in stays on this PC.",
+                           objectName="SignSub", wordWrap=True))
+        v.addSpacing(34)
+        row = QHBoxLayout()
+        row.addWidget(_link("Create account", "https://accounts.google.com/signup"))
+        row.addStretch(1)
+        if not self.first:
+            cancel = QPushButton("Cancel", objectName="Flat")
+            cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel.clicked.connect(self.reject)
+            row.addWidget(cancel)
+        self.next = QPushButton("Next", objectName="Primary")
+        self.next.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next.clicked.connect(self._next)
+        row.addWidget(self.next)
+        v.addLayout(row)
+        return page
+
+    # page 2: the password
+    def _password_page(self) -> QWidget:
+        page, v = self._page()
+        self.welcome = QLabel("Welcome", objectName="SignTitle", alignment=Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(self.welcome)
+        v.addSpacing(12)
+        self.who = QPushButton(objectName="Who")            # the address chip; click it to go back
+        self.who.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.who.setToolTip("Use a different account")
+        self.who.setIconSize(QSize(22, 22))
+        self.who.clicked.connect(self._back)
+        v.addWidget(self.who, 0, Qt.AlignmentFlag.AlignHCenter)
+        v.addSpacing(26)
+        v.addWidget(QLabel("To continue, enter the <b>App Password</b> for this account: the 16-letter "
+                           "password Google makes for one app. Your normal Google password won't work in "
+                           "mail apps.", objectName="SignSub", wordWrap=True))
+        v.addSpacing(16)
+        self.password = QLineEdit(objectName="Box", placeholderText="Enter your App Password")
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password.returnPressed.connect(self._check)
+        self.password.textEdited.connect(lambda _: self._error(self.password, self.pw_error, ""))
+        v.addWidget(self.password)
+        v.addSpacing(6)
+        self.pw_error = QLabel("", objectName="Error", wordWrap=True)
+        self.pw_error.hide()
+        v.addWidget(self.pw_error)
+        v.addSpacing(8)
+        self.show_pw = QCheckBox("Show password")
+        self.show_pw.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.show_pw.toggled.connect(lambda on: self.password.setEchoMode(
+            QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
+        v.addWidget(self.show_pw)
+        v.addSpacing(34)
+        row = QHBoxLayout()
+        row.addWidget(_link("Get an App Password", "https://myaccount.google.com/apppasswords"))
+        row.addStretch(1)
+        self.ok = QPushButton("Next", objectName="Primary")
+        self.ok.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ok.clicked.connect(self._check)
+        row.addWidget(self.ok)
+        v.addLayout(row)
+        return page
+
+    # the flow
+    @staticmethod
+    def _error(field: QLineEdit, label: QLabel, text: str) -> None:
+        label.setText(("\u26a0  " + text) if text else "")
+        label.setVisible(bool(text))
+        field.setProperty("error", bool(text))
+        field.style().unpolish(field)
+        field.style().polish(field)
+
+    def _next(self) -> None:
+        address = self.address.text().strip().lower()
+        if address and "@" not in address:
+            address += "@gmail.com"                        # like Google: a bare username means Gmail
+        name, _, domain = address.partition("@")
+        if not address:
+            return self._error(self.address, self.email_error, "Enter an email")
+        if not name or "." not in domain or " " in address:
+            return self._error(self.address, self.email_error, "Enter a valid email")
+        if address in [a.lower() for a in mbx.accounts()]:
+            return self._error(self.address, self.email_error, "This account is already added")
+        self.address.setText(address)
+        self.who.setText("  " + address + "   \u25be")
+        self.who.setIcon(QIcon(_avatar_pixmap(address, 44)))
+        self.welcome.setText("Hi " + look.friendly_name(address).split()[0])
+        self.password.clear()
+        self._error(self.password, self.pw_error, "")
+        self.pages.setCurrentIndex(1)
+        self.password.setFocus()
+
+    def _back(self) -> None:
+        self.pages.setCurrentIndex(0)
+        self.address.setFocus()
+        self.address.selectAll()
+
     def _check(self) -> None:
         address, pw = self.address.text().strip(), self.password.text().replace(" ", "")
-        if "@" not in address or len(pw) < 8:
-            self.status.setText("Enter the Gmail address and its 16-letter App Password.")
-            return
+        if not pw:
+            return self._error(self.password, self.pw_error, "Enter a password")
+        if len(pw) != 16 or not pw.isalpha():
+            return self._error(self.password, self.pw_error,
+                               "That isn't an App Password. It is 16 letters, like abcd efgh ijkl mnop")
         self.ok.setEnabled(False)
-        self.status.setText("Checking with Gmail…")
+        self.ok.setText("Checking\u2026")
         run_async(lambda: mbx.check_login(address, pw), lambda r: self._checked(r, address, pw))
 
     def _checked(self, result, address: str, pw: str) -> None:
         self.ok.setEnabled(True)
+        self.ok.setText("Next")
         if isinstance(result, Exception):
-            self.status.setText(f"Gmail did not accept that — check the address and App Password.\n({result})")
-            return
+            text = str(result)
+            if "AUTHENTICATIONFAILED" in text.upper() or "credentials" in text.lower():
+                text = "Wrong App Password, or IMAP is off for this account. Try again or get a new one."
+            else:
+                text = f"Couldn't reach Gmail. Check your internet and try again. ({text})"
+            return self._error(self.password, self.pw_error, text)
         mbx.add_account(address, pw)
         self.accept()
+
+
+def _avatar_pixmap(address: str, size: int) -> QPixmap:
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    photo = look.photo_path(address)
+    _avatar(p, QRectF(0, 0, size, size), look.friendly_name(address), address,
+            _round_photo(photo, size) if photo.exists() else None)
+    p.end()
+    return pm
+
+
+def _link(text: str, url: str) -> QPushButton:
+    b = QPushButton(text, objectName="Link")
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.clicked.connect(lambda: ThreadPoolExecutor(1).submit(_open_link, url))
+    return b
 
 
 class AccountPopup(QFrame):

@@ -317,3 +317,29 @@ def test_avatar_opens_the_account_card_every_time(tmp_path, monkeypatch):
     w._account_menu()                          # clicking the avatar again closes the card
     assert w._popup is None
     w.close()
+
+
+def test_add_account_asks_for_the_email_first_then_the_password(monkeypatch):
+    pytest.importorskip("PyQt6.QtWebEngineWidgets")
+    _app()
+    from judo_mail import app as ma
+    monkeypatch.setattr(ma.mbx, "accounts", lambda: ["me@gmail.com"])
+    checked, added = [], []
+    monkeypatch.setattr(ma, "run_async", lambda fn, cb: cb(fn()))
+    monkeypatch.setattr(ma.mbx, "check_login", lambda a, p: checked.append((a, p)))
+    monkeypatch.setattr(ma.mbx, "add_account", lambda a, p: added.append((a, p)))
+    d = ma.AccountDialog()
+    d.address.setText("me")                                  # already added
+    d._next()
+    assert d.pages.currentIndex() == 0 and "already added" in d.email_error.text()
+    d.address.setText("aman.verma")                          # a bare username means Gmail
+    d._next()
+    assert d.pages.currentIndex() == 1 and "aman.verma@gmail.com" in d.who.text()
+    d.password.setText("hunter2")
+    d._check()
+    assert not checked and "16 letters" in d.pw_error.text()
+    d.password.setText("abcd efgh ijkl mnop")
+    d._check()
+    assert added == [("aman.verma@gmail.com", "abcdefghijklmnop")]
+    d._back()
+    assert d.pages.currentIndex() == 0
