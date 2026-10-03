@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -51,7 +52,10 @@ SOURCES = [
 ]
 ATS = ("Greenhouse", "Lever", "Ashby", "Workday")
 JOB_SITES = ("LinkedIn", "Wellfound", "Indeed", "Naukri", "Instahyre")
-AGGREGATORS = ("Wellfound", "Indeed", "Naukri", "Instahyre")
+# Aggregators worth a query: their pages can be read over plain HTTP (Wellfound has JobPosting data, Instahyre
+# renders the posting text). Indeed answers 401 and Naukri wants a reCAPTCHA, so their hits stay unverified and
+# they get no query of their own — their links are still recognised when other searches return them.
+AGGREGATORS = ("Wellfound", "Instahyre")
 # Job boards / aggregators / blogs whose /jobs/... pages are search listings, not one company's posting.
 NOT_CAREERS = re.compile(r"(?i)(?:^|\.)(?:linkedin|glassdoor|indeed|naukri|foundit|monsterindia|monster|shine|timesjobs|wellfound|"
                          r"angel|instahyre|ziprecruiter|simplyhired|nextraise|career\.now|cutshort|internshala|apna|hirist|"
@@ -190,6 +194,9 @@ def _place(loc) -> str:
     out = []
     for item in items:
         if not isinstance(item, dict):
+            continue
+        if str(item.get("@type", "")).lower() in ("country", "state", "administrativearea", "city") and item.get("name"):
+            out.append(COUNTRY_CODES.get(str(item["name"]).upper(), str(item["name"])))   # applicantLocationRequirements
             continue
         a = item.get("address") or item.get("postalAddress") or {}
         if isinstance(a, dict):
@@ -403,7 +410,7 @@ def _page(job: dict, url: str, fetch, now: datetime) -> None:
         org = data.get("hiringOrganization") or {}
         remote = str(data.get("jobLocationType", "")).upper() == "TELECOMMUTE"
         job.update(title=data.get("title", "") or page_title, company=org.get("name", "") if isinstance(org, dict) else str(org),
-                   location=("Remote" + (f" - {_place(data.get('applicantLocationRequirements'))}" if data.get("applicantLocationRequirements") else ""))
+                   location=" - ".join(x for x in ("Remote", _place(data.get("applicantLocationRequirements"))) if x)
                    if remote else _place(data.get("jobLocation")),
                    work_mode="remote" if remote else "", employment_type=str(data.get("employmentType", "")),
                    description=data.get("description", "") or text, posted_at=_iso(data.get("datePosted")),
@@ -421,6 +428,9 @@ def _page(job: dict, url: str, fetch, now: datetime) -> None:
         # just as well be a listing or a blog post, so it isn't presented as a checked job.
         job.update(title=page_title.split("|")[0].split(" - ")[0].strip(), description=text,
                    verified=len(text) > 400 and job["source"] in JOB_SITES)
+        li = re.match(r"(.+?) hiring (.+?) in (.+?) \| LinkedIn\s*$", page_title)   # LinkedIn's sign-in wall
+        if job["source"] == "LinkedIn" and li:
+            job.update(company=li.group(1).strip(), title=li.group(2).strip(), location=li.group(3).strip())
         if not job["verified"]:
             job["error"] = "the page has no job-posting data, so I couldn't confirm it is one open job"
     if not job["posted_at"] and job["source"] in JOB_SITES:   # "3 days ago" on a blog or listing means nothing
@@ -440,8 +450,8 @@ SENIOR_HINT = re.compile(r"(?i)\b(?:senior|sr\.?|staff|principal|lead|head|direc
 def build_queries(prefs: dict, fresh: bool, max_queries: int = 30) -> list[tuple[str, str]]:
     """(query, source name) pairs, most useful first, at most `max_queries` (DDG rate-limits bursts).
 
-    First place: every role on every ATS board and LinkedIn, then one company-careers query per role,
-    then one query per aggregator. Further places: LinkedIn and Greenhouse per role. "Remote" alone
+    First place: every role on LinkedIn and every ATS board; then LinkedIn per role for the other places;
+    then one query per aggregator; company-careers queries (the noisiest) last. "Remote" alone
     finds mostly US-only remote jobs, so it is searched together with the user's other place ("remote India")."""
     roles = list(dict.fromkeys(r.strip() for r in prefs.get("roles") or ["software engineer"] if r and r.strip()))[:4]
     places = [p.strip() for p in prefs.get("locations") or [] if p and p.strip()]
@@ -453,10 +463,10 @@ def build_queries(prefs: dict, fresh: bool, max_queries: int = 30) -> list[tuple
     level = "entry level" if hi is not None and float(hi) <= 2 else ""
     site = {name: s for name, _, s, _ in SOURCES}
     q = lambda role, place, name: (" ".join(x for x in (f'"{role}"', place, level, site[name]) if x), name)
-    out = [q(r, places[0], n) for r in roles for n in (*ATS, "LinkedIn")]
-    out += [q(r, places[0], "Company careers") for r in roles]
+    out = [q(r, places[0], n) for r in roles for n in ("LinkedIn", *ATS)]
+    out += [q(r, p, "LinkedIn") for p in places[1:] for r in roles]
     out += [q(roles[i % len(roles)], places[0], n) for i, n in enumerate(AGGREGATORS)]
-    out += [q(r, p, n) for p in places[1:] for r in roles for n in ("LinkedIn", "Greenhouse")]
+    out += [q(r, places[0], "Company careers") for r in roles]
     return list(dict.fromkeys(out))[:max_queries]
 
 
@@ -542,16 +552,42 @@ def _board_picks(openings: list[dict], prefs: dict, cutoff: str | None, per_boar
     wanted = [p for p in prefs.get("locations") or [] if p and p.strip()]
     hi = (list(prefs.get("experience_range") or [0, 99]) + [99])[1]
     junior_only = hi is not None and float(hi) <= 2
+    # a remote opening counts only if it isn't limited to some other country than the ones asked for
+    countries = set().union(*[jdmod.places(w)["countries"] for w in wanted]) if wanted else set()
     picks = []
     for o in openings:
         if not title_fits(o["title"], roles) or (junior_only and SENIOR_HINT.search(o["title"])):
             continue
         if wanted and not any(jdmod.place_matches(o["location"], w) for w in wanted):
             continue
+        here = jdmod.places(o["location"])
+        if countries and here["countries"] and not here["countries"] & countries:
+            continue
         if cutoff and o["posted_at"] and o["posted_at"] < cutoff:
             continue
         picks.append(o)
     return sorted(picks, key=lambda o: o["posted_at"] or "", reverse=True)[:per_board]
+
+
+# Which search hits to open first. Measured on live results: DDG's ATS hits are often postings that closed
+# long ago (the index is stale), while LinkedIn hits under a time filter are mostly open and dated.
+FETCH_ORDER = {"LinkedIn": 0, "Greenhouse": 1, "Lever": 1, "Ashby": 1, "Workday": 1, "Wellfound": 2, "Company careers": 3,
+               "Instahyre": 4, "Naukri": 4, "Indeed": 4}
+
+
+def _pick(hits: list[dict], prefs: dict, n: int) -> list[dict]:
+    """The n search hits to open: by _rank, but taking turns between sources (LinkedIn two at a time) so
+    one site can't fill every slot — and one site's rate limit can't empty the whole result."""
+    ranked = sorted(hits, key=lambda c: _rank(c, prefs))
+    seen: dict[str, int] = {}
+    turn = []
+    for c in ranked:
+        src = source_of(c["url"])[0]
+        k = seen.get(src, 0)
+        seen[src] = k + 1
+        turn.append((_rank(c, prefs)[0], not c.get("board"), k // (2 if src == "LinkedIn" else 1), _rank(c, prefs)))
+    order = sorted(range(len(ranked)), key=lambda i: turn[i])
+    return [ranked[i] for i in order][:n]
 
 
 def _rank(c: dict, prefs: dict) -> tuple:
@@ -562,7 +598,7 @@ def _rank(c: dict, prefs: dict) -> tuple:
     senior = bool(SENIOR_HINT.search(hint)) and hi is not None and float(hi) <= 2
     words = {w for r in prefs.get("roles") or [] for w in re.findall(r"[a-z]{3,}", r.lower())}
     overlap = sum(1 for w in words if w in hint.lower())
-    return senior, not c.get("board"), c["prio"], -overlap
+    return senior, not c.get("board"), FETCH_ORDER.get(source_of(c["url"])[0], 5), -overlap
 
 
 def search_jobs(prefs: dict, *, fresh_days: int | None = None, max_jobs: int = 25, max_pages: int = 45,
@@ -580,7 +616,7 @@ def search_jobs(prefs: dict, *, fresh_days: int | None = None, max_jobs: int = 2
     queries = build_queries(prefs, bool(fresh_days), max_queries)
     say = progress or (lambda s: None)
     say(f"Searching {len({n for _, n in queries})} job sources…")
-    enough = max_pages * 2
+    enough = max_pages * 3 // 2
 
     def run(q):
         query, name = q
@@ -606,9 +642,19 @@ def search_jobs(prefs: dict, *, fresh_days: int | None = None, max_jobs: int = 2
                 break
     cache: dict[str, tuple[int, str]] = {}
 
+    linkedin = threading.Semaphore(2)              # LinkedIn answers 429 to bursts from one address
+
     def fetch_once(u: str) -> tuple[int, str]:   # one Ashby board / page per run, however many postings share it
         if u not in cache:
-            cache[u] = fetcher(u)
+            if "linkedin.com" in u:
+                with linkedin:
+                    res = fetcher(u)
+                    if res[0] in (429, 999):
+                        time.sleep(2)
+                        res = fetcher(u)
+            else:
+                res = fetcher(u)
+            cache[u] = res
         return cache[u]
 
     if boards and max_boards:
@@ -624,13 +670,15 @@ def search_jobs(prefs: dict, *, fresh_days: int | None = None, max_jobs: int = 2
                     urls[key] = {"url": o["url"], "title": o["title"], "snippet": "", "prio": prio, "board": True}
                 elif key in urls:
                     urls[key]["board"] = True
-    candidates = sorted(urls.values(), key=lambda c: _rank(c, prefs))[:max_pages]
+    candidates = _pick(list(urls.values()), prefs, max_pages)
     say(f"Found {len(urls)} possible postings — checking {len(candidates)} job pages…")
     with ThreadPoolExecutor(8) as pool:
         jobs = list(pool.map(lambda c: read_posting(c["url"], fetch_once, now), candidates))
     for j, c in zip(jobs, candidates):
-        if not j["title"] and c.get("title"):         # e.g. a closed posting: say which one it was
-            j["title"] = re.split(r"\s+[|–-]\s+|\s+at\s+", c["title"])[0].strip()[:120]
+        hint = re.sub(r"(?i)^(?:job application for|solicitud de empleo para)\s+", "", c.get("title") or "")
+        hint = re.split(r"\s+[|–-]\s+|\s+@\s+|\s+at\s+", hint)[0].strip()
+        if not j["title"] and hint and hint.lower() not in ("jobs", "careers") and "/" not in hint[:20]:
+            j["title"] = hint[:120]                    # e.g. a closed posting: say which one it was
             j["title_from"] = "search result"
     jobs = dedupe(jobs)
     if fresh_days:
@@ -660,7 +708,9 @@ def dedupe(jobs: list[dict]) -> list[dict]:
         if j.get("job_id"):
             keys.append(f"{j['source']}:{j['job_id']}")
         if j.get("company") and j.get("title"):
-            keys.append(f"{norm(j['company'])}|{norm(j['title'])}|{norm(j.get('location', ''))[:30]}")
+            p = jdmod.places(j.get("location", ""))          # "Bengaluru, India" = "Bangalore, Karnataka, India"
+            where = ",".join(sorted(p["cities"])) or ",".join(sorted(p["countries"])) or norm(j.get("location", ""))[:30]
+            keys.append(f"{norm(j['company'])}|{norm(j['title'])}|{where}")
         hit = next((alias[k] for k in keys if k in alias), None)
         if hit:
             seen = best[hit]

@@ -48,7 +48,7 @@ DEGREE_REQ = [
     # "Scrum Master" / "master the stack" are not degrees, and "be" (as in "you will be flexible") is not a B.E.
     (re.compile(r"(?i)\bmaster(?:'|’)?s\b|\bmasters?\s+(?:degree|of|in)\b|\bm\.?\s?tech\b|\bm\.?s\.?\b(?= in\b)|\bmca\b|"
                 r"\bmba\b|post[- ]?graduate"), 3, "Master's"),
-    (re.compile(r"(?i)\bbachelor(?:'|’)?s?\b|\bb\.?\s?tech\b|(?-i:\bB\.\s?E\b\.?|\bBE\b)(?=[\s,/.)])|\bb\.?sc\b|\bbca\b|"
+    (re.compile(r"(?i)\bbachelor(?:'|’)?s?\b|\bb\.?\s?tech\b|(?-i:\bB\.\s?E\b\.?(?=[\s,/.)])|\bBE\b(?=\s*(?:/|,|\(|or\s|in\s+(?:[A-Z][a-z]|CS|IT|EC|EE|CSE))))|\bb\.?sc\b|\bbca\b|"
                 r"undergraduate degree|\bdegree in\b|graduate degree|\bgraduate\b(?= in)"), 2, "Bachelor's"),
     (re.compile(r"(?i)\bdiploma\b"), 1, "Diploma"),
 ]
@@ -135,6 +135,10 @@ def place_matches(job_location: str, wanted: str) -> bool:
     return bool(wanted.strip()) and wanted.strip().lower() in (job_location or "").lower()
 
 
+# sentence breaks — but not inside "B.E. in CS", "e.g. Python", "i.e. SQL"
+SENTENCE = re.compile(r"(?<=[.;])(?<!\.[A-Za-z]\.)\s+|\n")
+
+
 def clean(text: str) -> str:
     """HTML or text → plain text with one item per line."""
     t = html.unescape(text or "")
@@ -175,7 +179,7 @@ def experience_requirement(text: str) -> dict | None:
     best = None
     t = clean(text)
     pref = _segments(t)[1]                              # lines under "Nice to have" / "Preferred" headings
-    for sentence in re.split(r"(?<=[.;\n])\s+|\n", t):
+    for sentence in re.split(SENTENCE, t):
         if not re.search(r"(?i)year|yr|month", sentence):
             continue
         if NOT_EXPERIENCE.search(sentence) and not re.search(r"(?i)experience|\bexp\b|hands[- ]on|professional", sentence):
@@ -221,6 +225,9 @@ def _window(sentence: str, m: re.Match, width: int = 200) -> str:
         return s
     off = len(sentence) - len(sentence.lstrip())
     start = max(0, m.start() - off - width // 3)
+    if start:                                           # don't cut a word in half
+        sp = s.find(" ", start)
+        start = sp + 1 if 0 <= sp < m.start() - off else start
     return ("…" if start else "") + s[start:start + width].strip() + "…"
 
 
@@ -228,7 +235,7 @@ def education_requirement(text: str) -> dict | None:
     t = clean(text)
     pref = _segments(t)[1]
     found = []
-    for sentence in re.split(r"(?<=[.;\n])\s+|\n", t):
+    for sentence in re.split(SENTENCE, t):
         if not re.search(r"(?i)degree|bachelor|master|ph\.?d|b\.?tech|(?-i:B\.?E)\b|m\.?tech|graduate|diploma|education|"
                          r"\bmca\b|\bbca\b|\bmba\b", sentence):
             continue
@@ -252,7 +259,7 @@ def analyse(description: str, title: str = "") -> dict:
         preferred = [s for s in sk.find_skills("\n".join(pref_lines)) if s not in required]
     else:  # no headings: sort sentence by sentence
         required, preferred = [], []
-        for sentence in re.split(r"(?<=[.;])\s+|\n", text):
+        for sentence in re.split(SENTENCE, text):
             found = sk.find_skills(sentence)
             if not found:
                 continue

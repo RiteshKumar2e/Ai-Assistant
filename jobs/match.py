@@ -38,6 +38,11 @@ IMPLIES = {"PostgreSQL": "SQL", "MySQL": "SQL", "SQL Server": "SQL", "Oracle": "
            "Express*": "REST APIs", "Django*": "REST APIs", "Flask*": "REST APIs"}
 
 
+CS_FIELD = re.compile(r"(?i)\b(?:computer|computing|information technology|software|\bIT\b|\bCSE\b|\bMCA\b|\bBCA\b|"
+                      r"data science|artificial intelligence)")
+CS_FUNDAMENTALS = ("Data Structures", "Algorithms", "OOP")
+
+
 def _implied(skills: list[str]) -> dict[str, str]:
     """skill → how the resume shows it ('' = listed itself, else the skill that implies it)."""
     have = {s: "" for s in skills}
@@ -74,6 +79,11 @@ def match(job: dict, profile: dict, prefs: dict | None = None) -> dict:
     desc = job.get("description") or ""
     a = jdmod.analyse(desc, job.get("title", ""))
     have = _implied(candidate_skills(profile))
+    # A computer-science degree covers the coursework fundamentals that fresher job posts list as "skills"
+    # but resumes rarely spell out; without this every graduate is "missing" DSA/OOP.
+    if any(CS_FIELD.search(f"{e.get('degree', '')} {e.get('field', '')}") for e in profile.get("education", [])):
+        for s in CS_FUNDAMENTALS:
+            have.setdefault(s, "your CS degree")
     blockers, concerns, notes = [], [], []
 
     # ── the posting itself ────────────────────────────────────────────────
